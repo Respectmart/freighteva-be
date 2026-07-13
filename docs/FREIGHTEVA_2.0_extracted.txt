@@ -1,0 +1,105 @@
+FREIGHTEVA 2.0 PROJECT
+Marrying Freighteva.com service script to current MT of Respectmart
+POC
+END USER PRODUCT IDEA
+Freighteva will be a platform where interested shippers get connected to reliable Freight Professionals. The flow is simple:
+Faruk is in Toronto Canada and needs to ship a box containing 3 laptops cheaply to Abid in Islamabad Pakistan, he sees that FEDEX, DHL and UPS are charging up to $450 which is way out of his budget. He checks Google and see Yamat Freight Services doing shipping through Airfreight consolidation to Islamabad, he checks their google profile and see 2.1 rating and customers complaining about delayed shipping and lost plus broken item in transit. He wants a solution where he will be able to check prices and reviews of freighter, he found Freighteva! He put in his search from CA to PK and saw 34 Businesses coming up with logic returning ratings, pricing and speed of delivery. He selects Dipson Logistics LLC which has 87 reviews with 4.9 ratings and $6/lb for doorstep delivery in PK. He booked shipment through the Freighteva platform, did KYC, pays and get label that moves the box from his house in Toronto to Dipo logistics in Calgary and items are picked by Canada Express and shipment goes to PK. The powering engine for this will be the current multitenancy system of Respectmart.
+Search Rework
+On Freighteva a user goes in and see the search functionality on the UI. 
+
+
+To:
+
+A: Pickup Origin (Postal Code or City)
+B: Destination Location (Postal Code or City)
+C: Freight Type (Drop Down: Air Freight, Ocean Freight, Directly with Carrier)
+D: Weight: If user selects Airfreight (Display Weight textbox and allow user to choose metric Kg/lb
+ or Direct Carrier let the form have dimension in lxwxh and choose kg/lb in/cm
+If Ocean Freight give option of weight or pallet, Drums, Crates, Boxes, Sacks
+Ensure we autosuggest locations to users based on city,zip entered [Use Easyship API] e.g
+
+On hover on each Freight type:
+Air Freight: Perfect for shipments <100lb
+Ocean Freight: Perfect for shipments >100lb
+Direct with Carrier: heavily discounted DHL, UPS, FEDEX +100 more for <50lb limited to few countries
+
+Button: Ship
+
+Result Logic
+If customer selects any of Air Freight and Ocean Freight following this logic:
+Display the results of services providers in this order
+
+Select users based on Routes setup in OS i.e If user searches for London to Lagos 
+then display customers with UK to Nigeria route
+Display users based on Freight Type set in OS Air and Ocean
+Verified Users first
+Verified + Highest customers rating 
+Pricing ocean/air
+Allow customers to filter results based on the above profiles and conditions in (a)
+
+If user selects Direct with Carrier, display rates from Easyship, user selects courier and make payment using the create-label flow:
+https://majestic.respectmart.com/create-local-shipment
+
+
+
+If user selects Air or Ocean Freight return result based on:
+Route, Price, Service Type, Duration, Subscription, Reviews from the Respectmart Engine
+
+Logic: Display results on these conditions:
+Subscription Type ( Advanced >Intermediate>Starter)
+Reviews: Users with highest reviews come first
+
+Shipping Booking User Part
+Flow continues with the OS booking flow, ensure the data plugged on the form gets copied to the form to avoid redundancy.
+
+
+The rest of the OS (Tracking, Invoice, KYC, Wallet, Receivers) use the notification system.
+Rework the Search functionality
+Using the parameters in (1) above Search Rework
+
+Integrating a Review Module
+Allow end customers to review merchants after the close of transaction, in the merchant dashboard, in profile section, have a review module:
+Review scale:1-5
+Standard 1-5 UI/UX Rating Scale Definitions
+1 - Very Poor/Unsatisfactory: 
+2 - Poor/Needs Improvement: 
+3 - Average/Neutral:
+4 - Good/Exceeds Expectations:
+5 - Excellent/Outstanding:
+
+A text box for writing reviews (200 words)
+
+
+
+Allow merchants to share their review links to collect reviews from customers.
+In tracking messages, include a review link unique to the merchant:
+Introduction
+Dear  Ola,
+Your shipment with invoice number PRQ-834971718L981823942 and tracking number 067911982 shipment status has now changed to Shipment Booked and Manifested.
+
+Our goal is to ensure prompt and quality delivery of your goods. Our support is available 24/7 to help as well.
+Track Shipment/Purchase Request
+Rate Your Experience with Us
+
+
+
+Thanks,
+Respectmart Team
+
+
+
+Merchants can also send their reviews out. There will be an engine summating the reviews for platform logic use.
+
+End users in their customers dashboard will be able to give ratings to shipments by the merchants
+A= Merchant Ratings
+
+
+
+Shipment Upload Functionality 
+Merchants most times have shipments in excel sheet, in order to use our tracking, invoicing and other modules, allow admin to upload file in CSV.
+
+
+Create an upload function in shipments
+All uploaded shipments can be in draft/pending
+Admin will be able to change the status of shipment from pending to successful if payment is manual
+If payment is automated, flows follow the regular flow of generating tracking number
