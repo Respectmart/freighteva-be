@@ -64,10 +64,14 @@ class ReviewController extends Controller
                 ->selectRaw('COALESCE(AVG(rating), 0) as avg_rating, COUNT(id) as count_ratings')
                 ->first();
 
-            Tenant::where('id', $tenantId)->update([
-                'rating_avg' => round($stats->avg_rating, 1),
-                'rating_count' => (int)$stats->count_ratings,
-            ]);
+            DB::table('tenant_details')->updateOrInsert(
+                ['tenant_id' => $tenantId],
+                [
+                    'rating_avg' => round($stats->avg_rating, 1),
+                    'rating_count' => (int)$stats->count_ratings,
+                    'updated_at' => now(),
+                ]
+            );
 
             return $review;
         });
@@ -147,10 +151,14 @@ class ReviewController extends Controller
                 ->selectRaw('COALESCE(AVG(rating), 0) as avg_rating, COUNT(id) as count_ratings')
                 ->first();
 
-            Tenant::where('id', $tenantId)->update([
-                'rating_avg' => round($stats->avg_rating, 1),
-                'rating_count' => (int)$stats->count_ratings,
-            ]);
+            DB::table('tenant_details')->updateOrInsert(
+                ['tenant_id' => $tenantId],
+                [
+                    'rating_avg' => round($stats->avg_rating, 1),
+                    'rating_count' => (int)$stats->count_ratings,
+                    'updated_at' => now(),
+                ]
+            );
 
             return $review;
         });

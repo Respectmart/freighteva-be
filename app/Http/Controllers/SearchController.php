@@ -378,6 +378,7 @@ class SearchController extends Controller
         // Query routes
         $routes = DB::table('shipment_routes')
             ->join('tenants', 'shipment_routes.tenant_id', '=', 'tenants.id')
+            ->leftJoin('tenant_details', 'tenants.id', '=', 'tenant_details.tenant_id')
             ->leftJoin('domains', function ($join) {
                 $join->on('tenants.id', '=', 'domains.tenant_id')
                      ->whereRaw('domains.id = (select min(id) from domains where tenant_id = tenants.id)');
@@ -386,11 +387,11 @@ class SearchController extends Controller
                 'shipment_routes.*',
                 'tenants.company_name',
                 'tenants.status as tenant_status',
-                'tenants.rating_avg',
-                'tenants.rating_count',
-                'tenants.sub_type',
+                DB::raw("COALESCE(tenant_details.rating_avg, 4.8) as rating_avg"),
+                DB::raw("COALESCE(tenant_details.rating_count, 0) as rating_count"),
+                DB::raw("COALESCE(tenant_details.sub_type, 'intermediate') as sub_type"),
                 'tenants.subdomain',
-                'domains.domain as custom_domain'
+                DB::raw("COALESCE(domains.domain, tenants.custom_domain) as custom_domain")
             )
             ->where('sending_country_id', $originCountry->id)
             ->where('receiving_country_id', $destCountry->id)
