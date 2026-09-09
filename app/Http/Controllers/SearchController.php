@@ -567,9 +567,11 @@ class SearchController extends Controller
                 ->select(
                     'c1.id as from_id',
                     'c1.name as from_name',
+                    'c1.iso_code_1 as from_code',
                     'c1.emoji as from_flag',
                     'c2.id as to_id',
                     'c2.name as to_name',
+                    'c2.iso_code_1 as to_code',
                     'c2.emoji as to_flag'
                 )
                 ->distinct()
@@ -579,10 +581,12 @@ class SearchController extends Controller
                     return [
                         'from' => $r->from_name,
                         'from_id' => $r->from_id,
+                        'from_code' => $r->from_code,
                         'to' => $r->to_name,
                         'to_id' => $r->to_id,
-                        'fromFlag' => $r->from_flag ?: '🌐',
-                        'toFlag' => $r->to_flag ?: '🌐',
+                        'to_code' => $r->to_code,
+                        'fromFlag' => (!empty($r->from_flag) && !str_contains($r->from_flag, '?')) ? $r->from_flag : null,
+                        'toFlag' => (!empty($r->to_flag) && !str_contains($r->to_flag, '?')) ? $r->to_flag : null,
                     ];
                 });
 
