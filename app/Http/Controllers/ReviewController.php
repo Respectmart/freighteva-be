@@ -50,30 +50,14 @@ class ReviewController extends Controller
         }
 
         $review = DB::transaction(function () use ($request, $shipment, $tenantId) {
-            // Create the review
-            $review = Review::create([
+            // Create the review — rating_avg/count are computed on-the-fly in search queries
+            return Review::create([
                 'tenant_id' => $tenantId,
-                'user_id' => auth()->id(), // Authenticated user
+                'user_id' => auth()->id(),
                 'shipment_id' => $shipment->id,
                 'rating' => $request->input('rating'),
                 'comment' => $request->input('comment'),
             ]);
-
-            // Recalculate average rating & review count for the tenant
-            $stats = Review::where('tenant_id', $tenantId)
-                ->selectRaw('COALESCE(AVG(rating), 0) as avg_rating, COUNT(id) as count_ratings')
-                ->first();
-
-            DB::table('tenant_details')->updateOrInsert(
-                ['tenant_id' => $tenantId],
-                [
-                    'rating_avg' => round($stats->avg_rating, 1),
-                    'rating_count' => (int)$stats->count_ratings,
-                    'updated_at' => now(),
-                ]
-            );
-
-            return $review;
         });
 
         // Load relations
@@ -139,28 +123,14 @@ class ReviewController extends Controller
         }
 
         $review = DB::transaction(function () use ($request, $shipment, $tenantId) {
-            $review = Review::create([
+            // Create the review — rating_avg/count are computed on-the-fly in search queries
+            return Review::create([
                 'tenant_id' => $tenantId,
                 'user_id' => $shipment->user_id ?? 1,
                 'shipment_id' => $shipment->id,
                 'rating' => $request->input('rating'),
                 'comment' => $request->input('comment'),
             ]);
-
-            $stats = Review::where('tenant_id', $tenantId)
-                ->selectRaw('COALESCE(AVG(rating), 0) as avg_rating, COUNT(id) as count_ratings')
-                ->first();
-
-            DB::table('tenant_details')->updateOrInsert(
-                ['tenant_id' => $tenantId],
-                [
-                    'rating_avg' => round($stats->avg_rating, 1),
-                    'rating_count' => (int)$stats->count_ratings,
-                    'updated_at' => now(),
-                ]
-            );
-
-            return $review;
         });
 
         return response()->json([
