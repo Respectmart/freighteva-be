@@ -280,13 +280,14 @@ class SearchController extends Controller
                                 $domain = DB::table('domains')->where('tenant_id', 1)->first();
                                 $sub = ($domain && isset($domain->domain)) ? $domain->domain : (($tenant && isset($tenant->subdomain)) ? $tenant->subdomain : 'abidexpress') . '.respectmart.test';
 
-                                $courierName = $rate['courier_service']['name'] ?? 'Courier Service';
+                                $courierLogo = $rate['courier_service']['logo'] ?? null;
 
                                 $formatted[] = [
                                     'id' => $index + 100,
                                     'tenant_id' => 1,
                                     'domain' => $sub,
                                     'initial' => strtoupper(substr($courierName, 0, 1)),
+                                    'logo' => $courierLogo,
                                     'name' => $courierName,
                                     'verified' => true,
                                     'rating' => '4.9',
