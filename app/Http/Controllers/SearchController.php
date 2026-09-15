@@ -214,22 +214,12 @@ class SearchController extends Controller
                         'Authorization' => 'Bearer ' . $easyshipToken,
                     ];
 
-                    $originState = $this->resolveStateCode($from, $originCode);
-                    $destState = $this->resolveStateCode($to, $destCode);
+                    $originAddress = $this->buildEasyshipAddress($from, $originCountry, $originCode);
+                    $destAddress = $this->buildEasyshipAddress($to, $destCountry, $destCode);
 
                     $postData = [
-                        "destination_address" => [
-                            "country_alpha2" => $destCode,
-                            "postal_code" => $this->getDefaultZipCode($destCode),
-                            "city" => $destCountry->capital ?? 'Capital',
-                            "state" => $destState ?: ($destCountry->capital ?? 'State'),
-                        ],
-                        "origin_address" => [
-                            "country_alpha2" => $originCode,
-                            "postal_code" => $this->getDefaultZipCode($originCode),
-                            "city" => $originCountry->capital ?? 'Capital',
-                            "state" => $originState ?: ($originCountry->capital ?? 'State'),
-                        ],
+                        "destination_address" => $destAddress,
+                        "origin_address" => $originAddress,
                         "incoterms" => "DDU",
                         "insurance" => [
                             "is_insured" => false,
@@ -267,8 +257,12 @@ class SearchController extends Controller
                         ],
                     ];
 
+                    \Illuminate\Support\Facades\Log::info('Easyship Request:', $postData);
                     $response = \Illuminate\Support\Facades\Http::withHeaders($headers)
                         ->post($easyshipUrl . "/rates", $postData);
+
+                    \Illuminate\Support\Facades\Log::info('Easyship Response Status: ' . $response->status());
+                    \Illuminate\Support\Facades\Log::info('Easyship Response Body: ' . substr($response->body(), 0, 500));
 
                     if ($response->successful()) {
                         $ratesData = $response->json();
@@ -281,12 +275,14 @@ class SearchController extends Controller
                                 $sub = ($domain && isset($domain->domain)) ? $domain->domain : (($tenant && isset($tenant->subdomain)) ? $tenant->subdomain : 'abidexpress') . '.respectmart.test';
 
                                 $courierName = $rate['courier_service']['name'] ?? 'Courier Service';
+                                $courierLogo = $rate['courier_service']['logo'] ?? null;
 
                                 $formatted[] = [
                                     'id' => $index + 100,
                                     'tenant_id' => 1,
                                     'domain' => $sub,
                                     'initial' => strtoupper(substr($courierName, 0, 1)),
+                                    'logo' => $courierLogo,
                                     'name' => $courierName,
                                     'verified' => true,
                                     'rating' => '4.9',
@@ -307,7 +303,7 @@ class SearchController extends Controller
                         }
                     }
                 } catch (\Exception $e) {
-                    Log::error('Easyship API rate call failed: ' . $e->getMessage());
+                    \Illuminate\Support\Facades\Log::error('Easyship API rate call failed: ' . $e->getMessage());
                 }
             }
 
@@ -386,11 +382,11 @@ class SearchController extends Controller
                 'shipment_routes.*',
                 'tenants.company_name',
                 'tenants.status as tenant_status',
-                'tenants.rating_avg',
-                'tenants.rating_count',
                 'tenants.sub_type',
                 'tenants.subdomain',
-                'domains.domain as custom_domain'
+                DB::raw("COALESCE(domains.domain, tenants.custom_domain) as custom_domain"),
+                DB::raw("COALESCE((SELECT ROUND(AVG(rating), 1) FROM reviews WHERE reviews.tenant_id = tenants.id), 0) as rating_avg"),
+                DB::raw("COALESCE((SELECT COUNT(id) FROM reviews WHERE reviews.tenant_id = tenants.id), 0) as rating_count")
             )
             ->where('sending_country_id', $originCountry->id)
             ->where('receiving_country_id', $destCountry->id)
@@ -538,6 +534,77 @@ class SearchController extends Controller
     }
 
     /**
+     * Build an accurate and validated address object for the Easyship rate calculation.
+     */
+    private function buildEasyshipAddress(string $query, $country, string $countryCode): array
+    {
+        $code = strtoupper($countryCode);
+        $state = $this->resolveStateCode($query, $code);
+
+        $addressMap = [
+            'US' => [
+                'NY' => ['city' => 'New York', 'postal_code' => '10001', 'state' => 'NY'],
+                'CA' => ['city' => 'Los Angeles', 'postal_code' => '90001', 'state' => 'CA'],
+                'IL' => ['city' => 'Chicago', 'postal_code' => '60601', 'state' => 'IL'],
+                'TX' => ['city' => 'Houston', 'postal_code' => '77001', 'state' => 'TX'],
+                'WA' => ['city' => 'Seattle', 'postal_code' => '98101', 'state' => 'WA'],
+                'default' => ['city' => 'New York', 'postal_code' => '10001', 'state' => 'NY'],
+            ],
+            'CA' => [
+                'ON' => ['city' => 'Toronto', 'postal_code' => 'M5V 2T6', 'state' => 'ON'],
+                'QC' => ['city' => 'Montreal', 'postal_code' => 'H3A 0G4', 'state' => 'QC'],
+                'BC' => ['city' => 'Vancouver', 'postal_code' => 'V6B 1A1', 'state' => 'BC'],
+                'AB' => ['city' => 'Calgary', 'postal_code' => 'T2P 2M5', 'state' => 'AB'],
+                'default' => ['city' => 'Toronto', 'postal_code' => 'M5V 2T6', 'state' => 'ON'],
+            ],
+            'GB' => [
+                'default' => ['city' => 'London', 'postal_code' => 'SW1A 1AA', 'state' => 'London'],
+            ],
+            'NG' => [
+                'default' => ['city' => 'Lagos', 'postal_code' => '100001', 'state' => 'Lagos'],
+            ],
+            'KE' => [
+                'default' => ['city' => 'Nairobi', 'postal_code' => '00100', 'state' => 'Nairobi'],
+            ],
+            'PK' => [
+                'default' => ['city' => 'Karachi', 'postal_code' => '74200', 'state' => 'Sindh'],
+            ],
+            'IN' => [
+                'default' => ['city' => 'Delhi', 'postal_code' => '110001', 'state' => 'Delhi'],
+            ],
+            'AU' => [
+                'default' => ['city' => 'Sydney', 'postal_code' => '2000', 'state' => 'NSW'],
+            ],
+            'DE' => [
+                'default' => ['city' => 'Berlin', 'postal_code' => '10115', 'state' => 'Berlin'],
+            ],
+            'NL' => [
+                'default' => ['city' => 'Amsterdam', 'postal_code' => '1012 JS', 'state' => 'North Holland'],
+            ],
+            'CM' => [
+                'default' => ['city' => 'Douala', 'postal_code' => '00237', 'state' => 'Littoral'],
+            ],
+        ];
+
+        if (isset($addressMap[$code])) {
+            $config = $addressMap[$code][$state] ?? $addressMap[$code]['default'];
+            return [
+                'country_alpha2' => $code,
+                'postal_code' => $config['postal_code'],
+                'city' => $config['city'],
+                'state' => $config['state'],
+            ];
+        }
+
+        return [
+            'country_alpha2' => $code,
+            'postal_code' => $this->getDefaultZipCode($code),
+            'city' => $country->capital ?? 'Capital',
+            'state' => $state ?: ($country->capital ?? 'State'),
+        ];
+    }
+
+    /**
      * Get default zip code for Easyship API location fallback.
      */
     private function getDefaultZipCode(string $countryCode): string
@@ -567,9 +634,11 @@ class SearchController extends Controller
                 ->select(
                     'c1.id as from_id',
                     'c1.name as from_name',
+                    'c1.iso_code_1 as from_code',
                     'c1.emoji as from_flag',
                     'c2.id as to_id',
                     'c2.name as to_name',
+                    'c2.iso_code_1 as to_code',
                     'c2.emoji as to_flag'
                 )
                 ->distinct()
@@ -579,10 +648,12 @@ class SearchController extends Controller
                     return [
                         'from' => $r->from_name,
                         'from_id' => $r->from_id,
+                        'from_code' => $r->from_code,
                         'to' => $r->to_name,
                         'to_id' => $r->to_id,
-                        'fromFlag' => $r->from_flag ?: '🌐',
-                        'toFlag' => $r->to_flag ?: '🌐',
+                        'to_code' => $r->to_code,
+                        'fromFlag' => (!empty($r->from_flag) && !str_contains($r->from_flag, '?')) ? $r->from_flag : null,
+                        'toFlag' => (!empty($r->to_flag) && !str_contains($r->to_flag, '?')) ? $r->to_flag : null,
                     ];
                 });
 
