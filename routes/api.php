@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('search')->group(function () {
     Route::get('autocomplete', [SearchController::class, 'autocomplete']);
+    Route::get('smart-location', [\App\Http\Controllers\Api\V1\SmartLocationController::class, 'resolve']);
     Route::post('rates', [SearchController::class, 'searchRates']);
 });
 
