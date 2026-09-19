@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -164,11 +165,14 @@ class SearchController extends Controller
         $weight = (float)$request->input('weight', 1.0);
         $unit = $request->input('unit', 'kg');
 
+        $userCountry = $request->input('user_country', $request->header('CF-IPCountry', 'US'));
+        $userRegion = $request->input('user_region', $request->header('CF-Region', 'WA'));
+
         // Resolve countries using ID first if available
         if (!empty($fromId) && is_numeric($fromId)) {
             $originCountry = DB::table('countries')->where('id', $fromId)->first();
         } else {
-            $originCode = $this->resolveCountryCode($from);
+            $originCode = $this->resolveCountryCode($from, $userCountry);
             $originCountry = DB::table('countries')->where('iso_code_1', $originCode)->first();
         }
 
@@ -214,7 +218,7 @@ class SearchController extends Controller
                         'Authorization' => 'Bearer ' . $easyshipToken,
                     ];
 
-                    $originAddress = $this->buildEasyshipAddress($from, $originCountry, $originCode);
+                    $originAddress = $this->buildEasyshipAddress($from, $originCountry, $originCode, $userRegion);
                     $destAddress = $this->buildEasyshipAddress($to, $destCountry, $destCode);
 
                     $postData = [
@@ -453,33 +457,119 @@ class SearchController extends Controller
     }
 
     /**
-     * Resolve search string to 2-letter country code.
+     * Resolve search string to 2-letter country code with IP awareness and smart city mapping.
      */
-    private function resolveCountryCode(string $string): string
+    private function resolveCountryCode(string $string, ?string $userCountry = null): string
     {
-        $string = strtolower($string);
+        $cleanString = trim($string);
+        if (empty($cleanString)) {
+            return strtoupper($userCountry ?: 'US');
+        }
 
-        if (str_contains($string, 'toronto') || str_contains($string, 'canada') || preg_match('/\bca\b/i', $string)) {
-            return 'CA';
-        }
-        if (str_contains($string, 'lagos') || str_contains($string, 'nigeria') || preg_match('/\bng\b/i', $string)) {
-            return 'NG';
-        }
-        if (str_contains($string, 'nairobi') || str_contains($string, 'kenya') || preg_match('/\bke\b/i', $string)) {
-            return 'KE';
-        }
-        if (str_contains($string, 'london') || str_contains($string, 'kingdom') || preg_match('/\buk\b/i', $string) || preg_match('/\bgb\b/i', $string)) {
-            return 'GB';
-        }
-        if (str_contains($string, 'chicago') || str_contains($string, 'states') || preg_match('/\bus\b/i', $string)) {
+        // 1. Direct Postal / Zip code regex detection
+        if (preg_match('/^\d{5}(-\d{4})?$/', $cleanString)) {
             return 'US';
         }
-        if (str_contains($string, 'karachi') || str_contains($string, 'pakistan') || preg_match('/\bpk\b/i', $string)) {
+        if (preg_match('/^[A-Z]\d[A-Z]\s?\d[A-Z]\d$/i', $cleanString)) {
+            return 'CA';
+        }
+        if (preg_match('/^[A-Z]{1,2}\d[A-Z\d]?\s?\d[A-Z]{2}$/i', $cleanString)) {
+            return 'GB';
+        }
+
+        // 2. Check if country is explicitly specified in parentheses or as last comma segment
+        // e.g. "Vancouver, Washington, United States" -> last segment is "United States"
+        // e.g. "Manchester, England, United Kingdom (GB)"
+        if (preg_match('/\b\(([A-Z]{2})\)\b/i', $cleanString, $matches)) {
+            return strtoupper($matches[1]);
+        }
+
+        $parts = array_map('trim', explode(',', $cleanString));
+        if (count($parts) > 1) {
+            $lastPart = end($parts);
+            
+            // Exact DB match on last part (Country name or ISO code)
+            $matchedCountry = DB::table('countries')
+                ->where('name', '=', $lastPart)
+                ->orWhere('iso_code_1', '=', strtoupper($lastPart))
+                ->orWhere('iso_code_2', '=', strtoupper($lastPart))
+                ->first();
+
+            if ($matchedCountry) {
+                return $matchedCountry->iso_code_1;
+            }
+
+            // Substring match on last part
+            $matchedCountryLike = DB::table('countries')
+                ->where('name', 'like', "%{$lastPart}%")
+                ->first();
+
+            if ($matchedCountryLike) {
+                return $matchedCountryLike->iso_code_1;
+            }
+        }
+
+        // 3. Exact DB match on full string
+        $fullCountryMatch = DB::table('countries')
+            ->where('name', '=', $cleanString)
+            ->orWhere('iso_code_1', '=', strtoupper($cleanString))
+            ->first();
+
+        if ($fullCountryMatch) {
+            return $fullCountryMatch->iso_code_1;
+        }
+
+        // 4. Check for known country keywords in the full string
+        $lower = strtolower($cleanString);
+        if (str_contains($lower, 'united states') || str_contains($lower, 'usa') || preg_match('/\b(us)\b/i', $cleanString)) {
+            return 'US';
+        }
+        if (str_contains($lower, 'united kingdom') || str_contains($lower, 'england') || str_contains($lower, 'scotland') || str_contains($lower, 'wales') || str_contains($lower, 'great britain') || preg_match('/\b(uk|gb)\b/i', $cleanString)) {
+            return 'GB';
+        }
+        if (str_contains($lower, 'canada') || preg_match('/\b(ca)\b/i', $cleanString)) {
+            return 'CA';
+        }
+        if (str_contains($lower, 'nigeria') || preg_match('/\b(ng)\b/i', $cleanString)) {
+            return 'NG';
+        }
+        if (str_contains($lower, 'kenya') || preg_match('/\b(ke)\b/i', $cleanString)) {
+            return 'KE';
+        }
+        if (str_contains($lower, 'pakistan') || preg_match('/\b(pk)\b/i', $cleanString)) {
+            return 'PK';
+        }
+        if (str_contains($lower, 'germany') || str_contains($lower, 'deutschland') || preg_match('/\b(de)\b/i', $cleanString)) {
+            return 'DE';
+        }
+        if (str_contains($lower, 'australia') || preg_match('/\b(au)\b/i', $cleanString)) {
+            return 'AU';
+        }
+        if (str_contains($lower, 'netherlands') || str_contains($lower, 'holland') || preg_match('/\b(nl)\b/i', $cleanString)) {
+            return 'NL';
+        }
+
+        // 5. Fallback City keyword matching (Only when no explicit country is in the string)
+        if (str_contains($lower, 'toronto') || str_contains($lower, 'montreal') || str_contains($lower, 'calgary') || str_contains($lower, 'ottawa') || str_contains($lower, 'vancouver')) {
+            return 'CA';
+        }
+        if (str_contains($lower, 'lagos') || str_contains($lower, 'abuja') || str_contains($lower, 'kano') || str_contains($lower, 'ibadan')) {
+            return 'NG';
+        }
+        if (str_contains($lower, 'nairobi') || str_contains($lower, 'mombasa')) {
+            return 'KE';
+        }
+        if (str_contains($lower, 'london') || str_contains($lower, 'manchester') || str_contains($lower, 'birmingham') || str_contains($lower, 'edinburgh')) {
+            return 'GB';
+        }
+        if (str_contains($lower, 'chicago') || str_contains($lower, 'marysville') || str_contains($lower, 'seattle') || str_contains($lower, 'houston') || str_contains($lower, 'dallas') || str_contains($lower, 'new york') || str_contains($lower, 'los angeles') || str_contains($lower, 'miami')) {
+            return 'US';
+        }
+        if (str_contains($lower, 'karachi') || str_contains($lower, 'lahore') || str_contains($lower, 'islamabad') || str_contains($lower, 'rawalpindi')) {
             return 'PK';
         }
 
-        // Try to match dynamically from the database
-        $parts = array_map('trim', explode(',', $string));
+        // 6. DB substring match on parts
         foreach ($parts as $part) {
             $country = DB::table('countries')
                 ->where('name', 'like', "%{$part}%")
@@ -490,37 +580,51 @@ class SearchController extends Controller
             }
         }
 
+        // 7. Fallback to client IP context if present
+        if (!empty($userCountry) && strlen($userCountry) === 2) {
+            return strtoupper($userCountry);
+        }
+
         return 'US'; // Default fallback
     }
+
 
     /**
      * Resolve state/region code for the address from query string.
      */
-    private function resolveStateCode(string $string, string $countryCode): ?string
+    private function resolveStateCode(string $string, string $countryCode, ?string $userRegion = null): ?string
     {
         $string = strtolower($string);
         $parts = array_map('trim', explode(',', $string));
 
         if ($countryCode === 'US') {
-            if (str_contains($string, 'washington') || str_contains($string, 'wa')) return 'WA';
-            if (str_contains($string, 'illinois') || str_contains($string, 'il') || str_contains($string, 'chicago')) return 'IL';
-            if (str_contains($string, 'new york') || str_contains($string, 'ny')) return 'NY';
-            if (str_contains($string, 'texas') || str_contains($string, 'tx')) return 'TX';
-            if (str_contains($string, 'california') || str_contains($string, 'ca')) return 'CA';
+            if (str_contains($string, 'washington') || str_contains($string, 'seattle') || str_contains($string, 'marysville') || preg_match('/\bwa\b/i', $string)) return 'WA';
+            if (str_contains($string, 'illinois') || str_contains($string, 'chicago') || preg_match('/\bil\b/i', $string)) return 'IL';
+            if (str_contains($string, 'new york') || preg_match('/\bny\b/i', $string)) return 'NY';
+            if (str_contains($string, 'texas') || str_contains($string, 'houston') || str_contains($string, 'dallas') || preg_match('/\btx\b/i', $string)) return 'TX';
+            if (str_contains($string, 'california') || str_contains($string, 'los angeles') || str_contains($string, 'san francisco') || preg_match('/\bca\b/i', $string)) return 'CA';
+            if (str_contains($string, 'ohio') || str_contains($string, 'columbus') || str_contains($string, 'cleveland') || preg_match('/\boh\b/i', $string)) return 'OH';
+            if (str_contains($string, 'florida') || str_contains($string, 'miami') || preg_match('/\bfl\b/i', $string)) return 'FL';
+            if (str_contains($string, 'georgia') || str_contains($string, 'atlanta') || preg_match('/\bga\b/i', $string)) return 'GA';
 
             foreach ($parts as $part) {
                 if (strlen($part) === 2 && preg_match('/^[a-z]{2}$/i', $part)) {
                     return strtoupper($part);
                 }
             }
-            return 'NY'; // Fallback
+
+            if (!empty($userRegion) && strlen($userRegion) === 2) {
+                return strtoupper($userRegion);
+            }
+
+            return 'WA'; // Default US fallback for Marysville/Washington corridor
         }
 
         if ($countryCode === 'CA') {
-            if (str_contains($string, 'ontario') || str_contains($string, 'on') || str_contains($string, 'toronto')) return 'ON';
-            if (str_contains($string, 'quebec') || str_contains($string, 'qc') || str_contains($string, 'montreal')) return 'QC';
-            if (str_contains($string, 'alberta') || str_contains($string, 'ab')) return 'AB';
-            if (str_contains($string, 'british columbia') || str_contains($string, 'bc') || str_contains($string, 'vancouver')) return 'BC';
+            if (str_contains($string, 'ontario') || str_contains($string, 'toronto') || str_contains($string, 'ottawa') || preg_match('/\bon\b/i', $string)) return 'ON';
+            if (str_contains($string, 'quebec') || str_contains($string, 'montreal') || preg_match('/\bqc\b/i', $string)) return 'QC';
+            if (str_contains($string, 'alberta') || str_contains($string, 'calgary') || str_contains($string, 'edmonton') || preg_match('/\bab\b/i', $string)) return 'AB';
+            if (str_contains($string, 'british columbia') || str_contains($string, 'vancouver') || preg_match('/\bbc\b/i', $string)) return 'BC';
 
             foreach ($parts as $part) {
                 if (strlen($part) === 2 && preg_match('/^[a-z]{2}$/i', $part)) {
@@ -536,53 +640,85 @@ class SearchController extends Controller
     /**
      * Build an accurate and validated address object for the Easyship rate calculation.
      */
-    private function buildEasyshipAddress(string $query, $country, string $countryCode): array
+    private function buildEasyshipAddress(string $query, $country, string $countryCode, ?string $userRegion = null): array
     {
         $code = strtoupper($countryCode);
-        $state = $this->resolveStateCode($query, $code);
+        $state = $this->resolveStateCode($query, $code, $userRegion);
+
+        // Extract city from query if provided (e.g. "Marysville, WA" -> "Marysville")
+        $rawCity = null;
+        $cachedPostal = null;
+        $cleanQuery = trim($query);
+
+        // Check if AI location cache has parsed values for this query
+        $cacheKey = "openai_loc_" . md5("{$cleanQuery}_{$code}");
+        $cachedAi = Cache::driver('file')->get($cacheKey);
+        if ($cachedAi && !empty($cachedAi['city'])) {
+            $rawCity = $cachedAi['city'];
+            if (!empty($cachedAi['state'])) {
+                $state = $cachedAi['state'];
+            }
+            if (!empty($cachedAi['postal_code'])) {
+                $cachedPostal = $cachedAi['postal_code'];
+            }
+        }
+
+        if (empty($rawCity) && !empty($cleanQuery)) {
+            $parts = array_map('trim', explode(',', $cleanQuery));
+            if (!empty($parts[0])) {
+                // If parts[0] is not just a country name
+                $testCountry = DB::table('countries')->where('name', $parts[0])->first();
+                if (!$testCountry) {
+                    $rawCity = ucwords($parts[0]);
+                }
+            }
+        }
 
         $addressMap = [
             'US' => [
-                'NY' => ['city' => 'New York', 'postal_code' => '10001', 'state' => 'NY'],
-                'CA' => ['city' => 'Los Angeles', 'postal_code' => '90001', 'state' => 'CA'],
-                'IL' => ['city' => 'Chicago', 'postal_code' => '60601', 'state' => 'IL'],
-                'TX' => ['city' => 'Houston', 'postal_code' => '77001', 'state' => 'TX'],
-                'WA' => ['city' => 'Seattle', 'postal_code' => '98101', 'state' => 'WA'],
-                'default' => ['city' => 'New York', 'postal_code' => '10001', 'state' => 'NY'],
+                'WA' => ['city' => $rawCity ?: 'Marysville', 'postal_code' => $cachedPostal ?: '98270', 'state' => 'WA'],
+                'OH' => ['city' => $rawCity ?: 'Marysville', 'postal_code' => $cachedPostal ?: '43040', 'state' => 'OH'],
+                'NY' => ['city' => $rawCity ?: 'New York', 'postal_code' => $cachedPostal ?: '10001', 'state' => 'NY'],
+                'CA' => ['city' => $rawCity ?: 'Los Angeles', 'postal_code' => $cachedPostal ?: '90001', 'state' => 'CA'],
+                'IL' => ['city' => $rawCity ?: 'Chicago', 'postal_code' => $cachedPostal ?: '60601', 'state' => 'IL'],
+                'TX' => ['city' => $rawCity ?: 'Houston', 'postal_code' => $cachedPostal ?: '77001', 'state' => 'TX'],
+                'FL' => ['city' => $rawCity ?: 'Miami', 'postal_code' => $cachedPostal ?: '33101', 'state' => 'FL'],
+                'GA' => ['city' => $rawCity ?: 'Atlanta', 'postal_code' => $cachedPostal ?: '30301', 'state' => 'GA'],
+                'default' => ['city' => $rawCity ?: 'Marysville', 'postal_code' => $cachedPostal ?: '98270', 'state' => 'WA'],
             ],
             'CA' => [
-                'ON' => ['city' => 'Toronto', 'postal_code' => 'M5V 2T6', 'state' => 'ON'],
-                'QC' => ['city' => 'Montreal', 'postal_code' => 'H3A 0G4', 'state' => 'QC'],
-                'BC' => ['city' => 'Vancouver', 'postal_code' => 'V6B 1A1', 'state' => 'BC'],
-                'AB' => ['city' => 'Calgary', 'postal_code' => 'T2P 2M5', 'state' => 'AB'],
-                'default' => ['city' => 'Toronto', 'postal_code' => 'M5V 2T6', 'state' => 'ON'],
+                'ON' => ['city' => $rawCity ?: 'Toronto', 'postal_code' => $cachedPostal ?: 'M5V 2T6', 'state' => 'ON'],
+                'QC' => ['city' => $rawCity ?: 'Montreal', 'postal_code' => $cachedPostal ?: 'H3A 0G4', 'state' => 'QC'],
+                'BC' => ['city' => $rawCity ?: 'Vancouver', 'postal_code' => $cachedPostal ?: 'V6B 1A1', 'state' => 'BC'],
+                'AB' => ['city' => $rawCity ?: 'Calgary', 'postal_code' => $cachedPostal ?: 'T2P 2M5', 'state' => 'AB'],
+                'default' => ['city' => $rawCity ?: 'Toronto', 'postal_code' => $cachedPostal ?: 'M5V 2T6', 'state' => 'ON'],
             ],
             'GB' => [
-                'default' => ['city' => 'London', 'postal_code' => 'SW1A 1AA', 'state' => 'London'],
+                'default' => ['city' => $rawCity ?: 'London', 'postal_code' => 'SW1A 1AA', 'state' => 'London'],
             ],
             'NG' => [
-                'default' => ['city' => 'Lagos', 'postal_code' => '100001', 'state' => 'Lagos'],
+                'default' => ['city' => $rawCity ?: 'Lagos', 'postal_code' => '100001', 'state' => 'Lagos'],
             ],
             'KE' => [
-                'default' => ['city' => 'Nairobi', 'postal_code' => '00100', 'state' => 'Nairobi'],
+                'default' => ['city' => $rawCity ?: 'Nairobi', 'postal_code' => '00100', 'state' => 'Nairobi'],
             ],
             'PK' => [
-                'default' => ['city' => 'Karachi', 'postal_code' => '74200', 'state' => 'Sindh'],
+                'default' => ['city' => $rawCity ?: 'Karachi', 'postal_code' => '74200', 'state' => 'Sindh'],
             ],
             'IN' => [
-                'default' => ['city' => 'Delhi', 'postal_code' => '110001', 'state' => 'Delhi'],
+                'default' => ['city' => $rawCity ?: 'Delhi', 'postal_code' => '110001', 'state' => 'Delhi'],
             ],
             'AU' => [
-                'default' => ['city' => 'Sydney', 'postal_code' => '2000', 'state' => 'NSW'],
+                'default' => ['city' => $rawCity ?: 'Sydney', 'postal_code' => '2000', 'state' => 'NSW'],
             ],
             'DE' => [
-                'default' => ['city' => 'Berlin', 'postal_code' => '10115', 'state' => 'Berlin'],
+                'default' => ['city' => $rawCity ?: 'Berlin', 'postal_code' => '10115', 'state' => 'Berlin'],
             ],
             'NL' => [
-                'default' => ['city' => 'Amsterdam', 'postal_code' => '1012 JS', 'state' => 'North Holland'],
+                'default' => ['city' => $rawCity ?: 'Amsterdam', 'postal_code' => '1012 JS', 'state' => 'North Holland'],
             ],
             'CM' => [
-                'default' => ['city' => 'Douala', 'postal_code' => '00237', 'state' => 'Littoral'],
+                'default' => ['city' => $rawCity ?: 'Douala', 'postal_code' => '00237', 'state' => 'Littoral'],
             ],
         ];
 
@@ -591,7 +727,7 @@ class SearchController extends Controller
             return [
                 'country_alpha2' => $code,
                 'postal_code' => $config['postal_code'],
-                'city' => $config['city'],
+                'city' => $rawCity ?: $config['city'],
                 'state' => $config['state'],
             ];
         }
@@ -599,7 +735,7 @@ class SearchController extends Controller
         return [
             'country_alpha2' => $code,
             'postal_code' => $this->getDefaultZipCode($code),
-            'city' => $country->capital ?? 'Capital',
+            'city' => $rawCity ?: ($country->capital ?? 'Capital'),
             'state' => $state ?: ($country->capital ?? 'State'),
         ];
     }
