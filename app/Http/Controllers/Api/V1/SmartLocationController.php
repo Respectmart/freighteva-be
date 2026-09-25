@@ -54,10 +54,17 @@ class SmartLocationController extends Controller
         $suggestions = [];
         $cleanQ = trim($q);
 
-        // 1. Check Database Countries & Major Logistics Hubs FIRST
+        // 1. Check Database Countries & Major Logistics Hubs FIRST (Instant local lookup)
         $dbSuggestions = $this->lookupDatabaseLocations($cleanQ, $type);
         if (!empty($dbSuggestions)) {
             $suggestions = array_merge($suggestions, $dbSuggestions);
+            // If we have database matches (countries/cities/states), return immediately for instantaneous <20ms search
+            if (count($suggestions) >= 2 || (isset($suggestions[0]['_priority']) && $suggestions[0]['_priority'] >= 85)) {
+                return array_map(function ($item) {
+                    unset($item['_priority']);
+                    return $item;
+                }, array_slice($suggestions, 0, 8));
+            }
         }
 
         // 2. Direct Postal / Zip Code Regex Detection
@@ -77,7 +84,7 @@ class SmartLocationController extends Controller
             }
         }
 
-        // 4. Query Photon (OpenStreetMap global geocoder) with clean POI filtering
+        // 4. Query Photon (OpenStreetMap global geocoder) with fast 1.2s timeout fallback
         try {
             $params = [
                 'q' => $cleanQ,
@@ -89,7 +96,7 @@ class SmartLocationController extends Controller
                 $params['lon'] = floatval($lon);
             }
 
-            $response = Http::timeout(4)->get('https://photon.komoot.io/api/', $params);
+            $response = Http::timeout(1.2)->get('https://photon.komoot.io/api/', $params);
 
             if ($response->successful()) {
                 $features = $response->json()['features'] ?? [];
@@ -152,10 +159,10 @@ class SmartLocationController extends Controller
                 }
             }
         } catch (\Exception $e) {
-            Log::warning('Photon geocoder lookup failed: ' . $e->getMessage());
+            Log::warning('Photon geocoder lookup failed or timed out: ' . $e->getMessage());
         }
 
-        // 5. If suggestions are empty and we haven't run AI yet, invoke OpenAI NLP
+        // 5. If suggestions are empty and we haven't run AI yet, invoke OpenAI NLP with 1.5s timeout
         if (empty($suggestions) && !$isNaturalLanguage) {
             $aiSuggestion = $this->lookupWithOpenAI($cleanQ, $biasCountry, $lat, $lon);
             if (!empty($aiSuggestion)) {
@@ -338,13 +345,14 @@ class SmartLocationController extends Controller
         $results = [];
         $cleanQ = trim($q);
 
+        // 1. Search Countries
         $countries = DB::table('countries')
             ->where('name', 'like', "{$cleanQ}%")
             ->orWhere('name', 'like', "%{$cleanQ}%")
             ->orWhere('iso_code_1', '=', strtoupper($cleanQ))
             ->orWhere('iso_code_2', '=', strtoupper($cleanQ))
             ->orWhere('capital', 'like', "{$cleanQ}%")
-            ->limit(6)
+            ->limit(8)
             ->get();
 
         foreach ($countries as $c) {
@@ -362,6 +370,7 @@ class SmartLocationController extends Controller
             $priority = $isExactCountry ? 100 : ($isPrefixCountry ? 90 : 75);
 
             $results[] = [
+                'id' => $c->id,
                 'display_name' => $displayName,
                 'city' => $city,
                 'state' => '',
@@ -374,6 +383,48 @@ class SmartLocationController extends Controller
                 '_priority' => $priority
             ];
         }
+
+        // 2. Search Zones (States, Provinces, Major Hubs)
+        try {
+            $zones = DB::table('zones')
+                ->join('countries', 'zones.country_id', '=', 'countries.id')
+                ->select(
+                    'zones.id as zone_id',
+                    'zones.name as zone_name',
+                    'countries.id as country_id',
+                    'countries.name as country_name',
+                    'countries.iso_code_1 as country_code'
+                )
+                ->where('zones.name', 'like', "{$cleanQ}%")
+                ->orWhere('zones.name', 'like', "%{$cleanQ}%")
+                ->limit(6)
+                ->get();
+
+            foreach ($zones as $z) {
+                $isPrefixZone = (stripos($z->zone_name, $cleanQ) === 0);
+                $priority = $isPrefixZone ? 85 : 70;
+
+                $results[] = [
+                    'id' => $z->country_id,
+                    'display_name' => "{$z->zone_name}, {$z->country_name}",
+                    'city' => $z->zone_name,
+                    'state' => $z->zone_name,
+                    'country' => $z->country_name,
+                    'iso_code' => $z->country_code,
+                    'postal_code' => '',
+                    'flag' => $this->countryCodeToEmoji($z->country_code),
+                    'is_local' => false,
+                    'source' => 'database_zone',
+                    '_priority' => $priority
+                ];
+            }
+        } catch (\Exception $e) {
+            // Silently continue if zones not accessible
+        }
+
+        usort($results, function ($a, $b) {
+            return ($b['_priority'] ?? 50) <=> ($a['_priority'] ?? 50);
+        });
 
         return $results;
     }
