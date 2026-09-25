@@ -52,6 +52,16 @@ class Shipment extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function shipmentSender(): BelongsTo
+    {
+        return $this->belongsTo(ShipmentSender::class, 'shipment_sender_id');
+    }
+
+    public function shipmentReceiver(): BelongsTo
+    {
+        return $this->belongsTo(ShipmentReceiver::class, 'shipment_receiver_id');
+    }
+
     /**
      * Get the chronological tracking events for this shipment.
      */

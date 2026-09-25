@@ -142,6 +142,48 @@ class UnifiedBookingController extends Controller
 
         $carrierName = $quote['tenant_company'] ?? ($quote['service_name'] ?? 'Freighteva Partner');
 
+        // Find or create customer user for this sender
+        $senderEmail = $sender['email'] ?? null;
+        $customerUser = null;
+        if (!empty($senderEmail)) {
+            $customerUser = \App\Models\User::where('email', $senderEmail)->first();
+            if (!$customerUser) {
+                $nameParts = explode(' ', trim($sender['name'] ?? 'Freight Customer'), 2);
+                $customerUser = \App\Models\User::create([
+                    'first_name' => $nameParts[0] ?? 'Freight',
+                    'last_name' => $nameParts[1] ?? 'Customer',
+                    'email' => $senderEmail,
+                    'mobile' => $sender['phone'] ?? 'N/A',
+                    'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(16)),
+                    'tenant_id' => $quote['tenant_id'] ?? 2,
+                ]);
+            }
+        }
+
+        // Create ShipmentSender record
+        $shipmentSender = \App\Models\ShipmentSender::create([
+            'name' => $sender['name'] ?? 'Freight Customer',
+            'email' => $senderEmail,
+            'phone_no' => $sender['phone'] ?? null,
+            'address' => $sender['address'] ?? 'Origin Address',
+            'city' => $sender['city'] ?? 'N/A',
+            'postal_code' => $sender['postal_code'] ?? '00000',
+            'country_id' => $quote['origin_country_id'] ?? 233,
+            'zone_id' => 1,
+        ]);
+
+        // Create ShipmentReceiver record
+        $shipmentReceiver = \App\Models\ShipmentReceiver::create([
+            'name' => $receiver['name'] ?? 'Recipient',
+            'email' => $receiver['email'] ?? null,
+            'phone_no' => $receiver['phone'] ?? null,
+            'address' => $receiver['address'] ?? 'Destination Address',
+            'city' => $receiver['city'] ?? 'N/A',
+            'postal_code' => $receiver['postal_code'] ?? '00000',
+            'country_id' => $quote['destination_country_id'] ?? 161,
+            'zone_id' => 1,
+        ]);
+
         // 5. Create Shipment Record in Database
         $shipment = Shipment::create([
             'tenant_id' => $quote['tenant_id'] ?? 1,
@@ -156,8 +198,8 @@ class UnifiedBookingController extends Controller
             'invoice_prefix' => $invoicePrefix,
             'invoice_no' => $invoiceNo,
             'awb_number' => $awbNumber,
-            'shipment_receiver_id' => 1,
-            'shipment_sender_id' => 1,
+            'shipment_receiver_id' => $shipmentReceiver->id,
+            'shipment_sender_id' => $shipmentSender->id,
             'freight_id' => str_contains(strtolower($quote['mode'] ?? ''), 'ocean') ? 1 : 2,
             'amount' => $basePrice,
             'total_amount' => $totalAmount,
@@ -168,7 +210,7 @@ class UnifiedBookingController extends Controller
             'pickup_time_slot' => $sender['pickup_time_slot'] ?? '09:00 AM - 01:00 PM',
             'pickup_type' => 'Door-to-door',
             'freight_mode' => $quote['mode'] ?? 'air',
-            'user_id' => auth()->id() ?: (\App\Models\User::first()?->id ?: 1),
+            'user_id' => $customerUser ? $customerUser->id : (auth()->id() ?: 1),
         ]);
 
         // Record initial tracking event
