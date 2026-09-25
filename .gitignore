@@ -25,3 +25,10 @@ _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Documentation & Requirements
+docs/
+*.docx
+
+# Build Archives
+*.zip
