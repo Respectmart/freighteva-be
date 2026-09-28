@@ -58,8 +58,8 @@ class SmartLocationController extends Controller
         $dbSuggestions = $this->lookupDatabaseLocations($cleanQ, $type);
         if (!empty($dbSuggestions)) {
             $suggestions = array_merge($suggestions, $dbSuggestions);
-            // If we have database matches (countries/cities/states), return immediately for instantaneous <20ms search
-            if (count($suggestions) >= 2 || (isset($suggestions[0]['_priority']) && $suggestions[0]['_priority'] >= 85)) {
+            // If we have high-confidence database matches (countries/major hubs), return immediately for instantaneous <20ms search
+            if (!empty($suggestions) && isset($suggestions[0]['_priority']) && $suggestions[0]['_priority'] >= 85) {
                 return array_map(function ($item) {
                     unset($item['_priority']);
                     return $item;
@@ -338,14 +338,132 @@ class SmartLocationController extends Controller
     }
 
     /**
-     * Search database countries and shipment routes.
+     * Search database countries, major freight hubs, and shipment routes.
      */
     private function lookupDatabaseLocations(string $q, string $type): array
     {
         $results = [];
         $cleanQ = trim($q);
+        $lowerQ = strtolower($cleanQ);
 
-        // 1. Search Countries
+        // 1. Major Global Logistics & Freight Hubs (Highest Priority Direct Matching)
+        $popularHubs = [
+            // Canada
+            ['city' => 'Toronto', 'state' => 'ON', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['toronto', 'toro', 'tor', 'yyz', 'gta', 'ontario']],
+            ['city' => 'Montreal', 'state' => 'QC', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['montreal', 'yul', 'quebec']],
+            ['city' => 'Vancouver', 'state' => 'BC', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['vancouver', 'yvr', 'british columbia']],
+            ['city' => 'Calgary', 'state' => 'AB', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['calgary', 'yyc', 'alberta']],
+            ['city' => 'Edmonton', 'state' => 'AB', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['edmonton', 'yeg']],
+            ['city' => 'Ottawa', 'state' => 'ON', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['ottawa', 'yow']],
+            ['city' => 'Winnipeg', 'state' => 'MB', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['winnipeg', 'ywg']],
+            ['city' => 'Halifax', 'state' => 'NS', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['halifax', 'yhz']],
+            ['city' => 'Mississauga', 'state' => 'ON', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['mississauga']],
+            ['city' => 'Brampton', 'state' => 'ON', 'country' => 'Canada', 'iso_code' => 'CA', 'synonyms' => ['brampton']],
+
+            // United States
+            ['city' => 'New York', 'state' => 'NY', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['new york', 'nyc', 'jfk', 'ewr', 'lga']],
+            ['city' => 'Los Angeles', 'state' => 'CA', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['los angeles', 'la', 'lax']],
+            ['city' => 'Chicago', 'state' => 'IL', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['chicago', 'ord', 'mdw', 'chi']],
+            ['city' => 'Houston', 'state' => 'TX', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['houston', 'iah', 'hou']],
+            ['city' => 'Dallas', 'state' => 'TX', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['dallas', 'dfw']],
+            ['city' => 'Miami', 'state' => 'FL', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['miami', 'mia']],
+            ['city' => 'Atlanta', 'state' => 'GA', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['atlanta', 'atl']],
+            ['city' => 'Seattle', 'state' => 'WA', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['seattle', 'sea']],
+            ['city' => 'San Francisco', 'state' => 'CA', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['san francisco', 'sfo', 'sf']],
+            ['city' => 'Boston', 'state' => 'MA', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['boston', 'bos']],
+            ['city' => 'Newark', 'state' => 'NJ', 'country' => 'United States', 'iso_code' => 'US', 'synonyms' => ['newark', 'ewr']],
+
+            // United Kingdom
+            ['city' => 'London', 'state' => 'England', 'country' => 'United Kingdom', 'iso_code' => 'GB', 'synonyms' => ['london', 'lhr', 'lgw', 'lon', 'uk', 'great britain']],
+            ['city' => 'Manchester', 'state' => 'England', 'country' => 'United Kingdom', 'iso_code' => 'GB', 'synonyms' => ['manchester', 'man']],
+            ['city' => 'Birmingham', 'state' => 'England', 'country' => 'United Kingdom', 'iso_code' => 'GB', 'synonyms' => ['birmingham', 'bhx']],
+            ['city' => 'Glasgow', 'state' => 'Scotland', 'country' => 'United Kingdom', 'iso_code' => 'GB', 'synonyms' => ['glasgow', 'gla']],
+            ['city' => 'Edinburgh', 'state' => 'Scotland', 'country' => 'United Kingdom', 'iso_code' => 'GB', 'synonyms' => ['edinburgh', 'edi']],
+
+            // Nigeria
+            ['city' => 'Lagos', 'state' => 'Lagos State', 'country' => 'Nigeria', 'iso_code' => 'NG', 'synonyms' => ['lagos', 'los', 'ikeja', 'victoria island', 'lekki']],
+            ['city' => 'Abuja', 'state' => 'FCT', 'country' => 'Nigeria', 'iso_code' => 'NG', 'synonyms' => ['abuja', 'abv']],
+            ['city' => 'Port Harcourt', 'state' => 'Rivers', 'country' => 'Nigeria', 'iso_code' => 'NG', 'synonyms' => ['port harcourt', 'phc']],
+            ['city' => 'Kano', 'state' => 'Kano', 'country' => 'Nigeria', 'iso_code' => 'NG', 'synonyms' => ['kano', 'kan']],
+            ['city' => 'Ibadan', 'state' => 'Oyo', 'country' => 'Nigeria', 'iso_code' => 'NG', 'synonyms' => ['ibadan']],
+            ['city' => 'Benin City', 'state' => 'Edo', 'country' => 'Nigeria', 'iso_code' => 'NG', 'synonyms' => ['benin city', 'benin']],
+
+            // Kenya & East Africa
+            ['city' => 'Nairobi', 'state' => 'Nairobi', 'country' => 'Kenya', 'iso_code' => 'KE', 'synonyms' => ['nairobi', 'nbo', 'kenya']],
+            ['city' => 'Mombasa', 'state' => 'Coast', 'country' => 'Kenya', 'iso_code' => 'KE', 'synonyms' => ['mombasa', 'mba']],
+
+            // UAE & Middle East
+            ['city' => 'Dubai', 'state' => 'Dubai', 'country' => 'United Arab Emirates', 'iso_code' => 'AE', 'synonyms' => ['dubai', 'dxb', 'uae']],
+            ['city' => 'Abu Dhabi', 'state' => 'Abu Dhabi', 'country' => 'United Arab Emirates', 'iso_code' => 'AE', 'synonyms' => ['abu dhabi', 'auh']],
+            ['city' => 'Doha', 'state' => 'Doha', 'country' => 'Qatar', 'iso_code' => 'QA', 'synonyms' => ['doha', 'doh']],
+            ['city' => 'Riyadh', 'state' => 'Riyadh', 'country' => 'Saudi Arabia', 'iso_code' => 'SA', 'synonyms' => ['riyadh', 'ruh']],
+            ['city' => 'Jeddah', 'state' => 'Makkah', 'country' => 'Saudi Arabia', 'iso_code' => 'SA', 'synonyms' => ['jeddah', 'jed']],
+
+            // China & Asia
+            ['city' => 'Guangzhou', 'state' => 'Guangdong', 'country' => 'China', 'iso_code' => 'CN', 'synonyms' => ['guangzhou', 'can', 'canton']],
+            ['city' => 'Shenzhen', 'state' => 'Guangdong', 'country' => 'China', 'iso_code' => 'CN', 'synonyms' => ['shenzhen', 'szx']],
+            ['city' => 'Shanghai', 'state' => 'Shanghai', 'country' => 'China', 'iso_code' => 'CN', 'synonyms' => ['shanghai', 'pvg', 'sha']],
+            ['city' => 'Beijing', 'state' => 'Beijing', 'country' => 'China', 'iso_code' => 'CN', 'synonyms' => ['beijing', 'pek', 'pkx']],
+            ['city' => 'Hong Kong', 'state' => 'HK', 'country' => 'Hong Kong', 'iso_code' => 'HK', 'synonyms' => ['hong kong', 'hkg']],
+            ['city' => 'Singapore', 'state' => 'Singapore', 'country' => 'Singapore', 'iso_code' => 'SG', 'synonyms' => ['singapore', 'sin']],
+            ['city' => 'Tokyo', 'state' => 'Tokyo', 'country' => 'Japan', 'iso_code' => 'JP', 'synonyms' => ['tokyo', 'nrt', 'hnd']],
+
+            // South Asia
+            ['city' => 'Karachi', 'state' => 'Sindh', 'country' => 'Pakistan', 'iso_code' => 'PK', 'synonyms' => ['karachi', 'khi']],
+            ['city' => 'Lahore', 'state' => 'Punjab', 'country' => 'Pakistan', 'iso_code' => 'PK', 'synonyms' => ['lahore', 'lhe']],
+            ['city' => 'Islamabad', 'state' => 'Federal', 'country' => 'Pakistan', 'iso_code' => 'PK', 'synonyms' => ['islamabad', 'isb']],
+            ['city' => 'Mumbai', 'state' => 'Maharashtra', 'country' => 'India', 'iso_code' => 'IN', 'synonyms' => ['mumbai', 'bom', 'bombay']],
+            ['city' => 'Delhi', 'state' => 'Delhi', 'country' => 'India', 'iso_code' => 'IN', 'synonyms' => ['delhi', 'new delhi', 'del']],
+
+            // Europe
+            ['city' => 'Amsterdam', 'state' => 'North Holland', 'country' => 'Netherlands', 'iso_code' => 'NL', 'synonyms' => ['amsterdam', 'ams', 'schiphol']],
+            ['city' => 'Rotterdam', 'state' => 'South Holland', 'country' => 'Netherlands', 'iso_code' => 'NL', 'synonyms' => ['rotterdam', 'rtm']],
+            ['city' => 'Frankfurt', 'state' => 'Hesse', 'country' => 'Germany', 'iso_code' => 'DE', 'synonyms' => ['frankfurt', 'fra']],
+            ['city' => 'Paris', 'state' => 'Ile-de-France', 'country' => 'France', 'iso_code' => 'FR', 'synonyms' => ['paris', 'cdg', 'ory']],
+            ['city' => 'Milan', 'state' => 'Lombardy', 'country' => 'Italy', 'iso_code' => 'IT', 'synonyms' => ['milan', 'mxp']],
+            ['city' => 'Madrid', 'state' => 'Madrid', 'country' => 'Spain', 'iso_code' => 'ES', 'synonyms' => ['madrid', 'mad']],
+            ['city' => 'Antwerp', 'state' => 'Flanders', 'country' => 'Belgium', 'iso_code' => 'BE', 'synonyms' => ['antwerp', 'anr']],
+        ];
+
+        foreach ($popularHubs as $hub) {
+            $cityNameLower = strtolower($hub['city']);
+            $isExactCity = ($cityNameLower === $lowerQ);
+            $isPrefixCity = (strpos($cityNameLower, $lowerQ) === 0);
+            $isSubstringCity = (strpos($cityNameLower, $lowerQ) !== false);
+
+            $synonymMatch = false;
+            foreach ($hub['synonyms'] as $syn) {
+                if ($syn === $lowerQ || strpos($syn, $lowerQ) === 0) {
+                    $synonymMatch = true;
+                    break;
+                }
+            }
+
+            if ($isExactCity || $isPrefixCity || $isSubstringCity || $synonymMatch) {
+                $displayName = $hub['city'];
+                if (!empty($hub['state'])) {
+                    $displayName .= ", {$hub['state']}";
+                }
+                $displayName .= ", {$hub['country']}";
+
+                $priority = $isExactCity ? 100 : ($isPrefixCity ? 98 : ($synonymMatch ? 95 : 85));
+
+                $results[] = [
+                    'display_name' => $displayName,
+                    'city' => $hub['city'],
+                    'state' => $hub['state'] ?? '',
+                    'country' => $hub['country'],
+                    'iso_code' => $hub['iso_code'],
+                    'postal_code' => '',
+                    'flag' => $this->countryCodeToEmoji($hub['iso_code']),
+                    'is_local' => false,
+                    'source' => 'major_hub',
+                    '_priority' => $priority
+                ];
+            }
+        }
+
+        // 2. Search Database Countries
         $countries = DB::table('countries')
             ->where('name', 'like', "{$cleanQ}%")
             ->orWhere('name', 'like', "%{$cleanQ}%")
@@ -354,6 +472,17 @@ class SmartLocationController extends Controller
             ->orWhere('capital', 'like', "{$cleanQ}%")
             ->limit(8)
             ->get();
+
+        // Check active route country IDs for routing relevance boost
+        $activeRouteCountryIds = [];
+        try {
+            $activeRouteCountryIds = DB::table('shipment_routes')
+                ->selectRaw($type === 'to' ? 'distinct receiving_country_id as cid' : 'distinct sending_country_id as cid')
+                ->pluck('cid')
+                ->toArray();
+        } catch (\Exception $e) {
+            // Ignore if DB table inaccessible
+        }
 
         foreach ($countries as $c) {
             $isExactCountry = (strcasecmp($c->name, $cleanQ) === 0 || strcasecmp($c->iso_code_1, $cleanQ) === 0);
@@ -367,7 +496,8 @@ class SmartLocationController extends Controller
                 $city = $c->capital;
             }
 
-            $priority = $isExactCountry ? 100 : ($isPrefixCountry ? 90 : 75);
+            $routeBonus = in_array($c->id, $activeRouteCountryIds) ? 5 : 0;
+            $priority = ($isExactCountry ? 100 : ($isPrefixCountry ? 90 : 75)) + $routeBonus;
 
             $results[] = [
                 'id' => $c->id,
@@ -384,7 +514,7 @@ class SmartLocationController extends Controller
             ];
         }
 
-        // 2. Search Zones (States, Provinces, Major Hubs)
+        // 3. Search Zones (States, Provinces)
         try {
             $zones = DB::table('zones')
                 ->join('countries', 'zones.country_id', '=', 'countries.id')
@@ -401,8 +531,9 @@ class SmartLocationController extends Controller
                 ->get();
 
             foreach ($zones as $z) {
+                $isExactZone = (strcasecmp($z->zone_name, $cleanQ) === 0);
                 $isPrefixZone = (stripos($z->zone_name, $cleanQ) === 0);
-                $priority = $isPrefixZone ? 85 : 70;
+                $priority = $isExactZone ? 88 : ($isPrefixZone ? 72 : 55);
 
                 $results[] = [
                     'id' => $z->country_id,
@@ -422,11 +553,22 @@ class SmartLocationController extends Controller
             // Silently continue if zones not accessible
         }
 
-        usort($results, function ($a, $b) {
+        // De-duplicate results by unique city + state + country
+        $unique = [];
+        $seen = [];
+        foreach ($results as $item) {
+            $key = strtolower(trim($item['city']) . '|' . strtolower(trim($item['state'] ?? '')) . '|' . strtolower(trim($item['country'] ?? '')));
+            if (!in_array($key, $seen)) {
+                $seen[] = $key;
+                $unique[] = $item;
+            }
+        }
+
+        usort($unique, function ($a, $b) {
             return ($b['_priority'] ?? 50) <=> ($a['_priority'] ?? 50);
         });
 
-        return $results;
+        return $unique;
     }
 
     /**
