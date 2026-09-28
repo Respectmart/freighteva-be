@@ -159,34 +159,52 @@ class UnifiedBookingController extends Controller
                     'last_name' => $nameParts[1] ?? 'Customer',
                     'email' => $senderEmail,
                     'mobile' => $sender['phone'] ?? 'N/A',
-                    'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(16)),
+                    'password' => \Illuminate\Support\Facades\Hash::make('password123'),
                     'tenant_id' => $targetTenantId,
                 ]);
+
+                try {
+                    $customerUser->assignRole('user');
+                } catch (\Exception $e) {
+                    \Illuminate\Support\Facades\DB::table('model_has_roles')->insertOrIgnore([
+                        'role_id' => 3,
+                        'model_type' => 'App\\Models\\User',
+                        'model_id' => $customerUser->id,
+                    ]);
+                }
             }
         }
 
         // Create ShipmentSender record
         $shipmentSender = \App\Models\ShipmentSender::create([
             'name' => $sender['name'] ?? 'Freight Customer',
-            'email' => $senderEmail,
-            'phone_no' => $sender['phone'] ?? null,
+            'company_name' => $sender['company'] ?? null,
+            'email' => $senderEmail ?? 'customer@freighteva.com',
+            'phone_no' => !empty($sender['phone']) ? $sender['phone'] : '+10000000000',
             'address' => $sender['address'] ?? 'Origin Address',
-            'city' => $sender['city'] ?? 'N/A',
-            'postal_code' => $sender['postal_code'] ?? '00000',
+            'city' => !empty($sender['city']) ? $sender['city'] : 'Origin City',
+            'postal_code' => !empty($sender['postal_code']) ? substr($sender['postal_code'], 0, 10) : '00000',
             'country_id' => $quote['origin_country_id'] ?? 233,
             'zone_id' => 1,
         ]);
 
-        // Create ShipmentReceiver record
+        // Create ShipmentReceiver record (matching shipment_receivers schema: first_name, last_name, email, mobile, zip_code)
+        $receiverFullName = trim($receiver['name'] ?? 'Recipient Customer');
+        $receiverNameParts = explode(' ', $receiverFullName, 2);
+        $receiverFirstName = !empty($receiverNameParts[0]) ? $receiverNameParts[0] : 'Recipient';
+        $receiverLastName = !empty($receiverNameParts[1]) ? $receiverNameParts[1] : 'Customer';
+
         $shipmentReceiver = \App\Models\ShipmentReceiver::create([
-            'name' => $receiver['name'] ?? 'Recipient',
-            'email' => $receiver['email'] ?? null,
-            'phone_no' => $receiver['phone'] ?? null,
+            'first_name' => substr($receiverFirstName, 0, 50),
+            'last_name' => substr($receiverLastName, 0, 50),
+            'email' => $receiver['email'] ?? ($senderEmail ?? 'receiver@freighteva.com'),
+            'mobile' => !empty($receiver['phone']) ? $receiver['phone'] : '+10000000000',
             'address' => $receiver['address'] ?? 'Destination Address',
-            'city' => $receiver['city'] ?? 'N/A',
-            'postal_code' => $receiver['postal_code'] ?? '00000',
+            'city' => !empty($receiver['city']) ? $receiver['city'] : 'Destination City',
+            'zip_code' => !empty($receiver['postal_code']) ? substr($receiver['postal_code'], 0, 10) : '00000',
             'country_id' => $quote['destination_country_id'] ?? 161,
             'zone_id' => 1,
+            'company' => !empty($receiver['company']) ? substr($receiver['company'], 0, 45) : null,
         ]);
 
         // 5. Create Shipment Record in Database
