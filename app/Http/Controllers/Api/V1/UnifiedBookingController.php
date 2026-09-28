@@ -142,11 +142,16 @@ class UnifiedBookingController extends Controller
 
         $carrierName = $quote['tenant_company'] ?? ($quote['service_name'] ?? 'Freighteva Partner');
 
-        // Find or create customer user for this sender
+        // Find or create customer user scoped to the specific merchant tenant
         $senderEmail = $sender['email'] ?? null;
         $customerUser = null;
+        $targetTenantId = $quote['tenant_id'] ?? 1;
+
         if (!empty($senderEmail)) {
-            $customerUser = \App\Models\User::where('email', $senderEmail)->first();
+            $customerUser = \App\Models\User::where('email', $senderEmail)
+                ->where('tenant_id', $targetTenantId)
+                ->first();
+
             if (!$customerUser) {
                 $nameParts = explode(' ', trim($sender['name'] ?? 'Freight Customer'), 2);
                 $customerUser = \App\Models\User::create([
@@ -155,7 +160,7 @@ class UnifiedBookingController extends Controller
                     'email' => $senderEmail,
                     'mobile' => $sender['phone'] ?? 'N/A',
                     'password' => \Illuminate\Support\Facades\Hash::make(\Illuminate\Support\Str::random(16)),
-                    'tenant_id' => $quote['tenant_id'] ?? 2,
+                    'tenant_id' => $targetTenantId,
                 ]);
             }
         }
