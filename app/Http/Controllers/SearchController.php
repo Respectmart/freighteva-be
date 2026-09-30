@@ -372,89 +372,84 @@ class SearchController extends Controller
             // ]);
         }
 
-        // Air Freight or Ocean Freight
+        // Air Freight or Ocean Freight: Generate Top Curated Freighteva Recommendations
         $routeMode = ($mode === 'Ocean Freight') ? 'ocean' : 'air';
+        $weightInKg = ($unit === 'lb') ? $weight * 0.453592 : $weight;
 
-        // Query routes
-        $routes = DB::table('shipment_routes')
-            ->join('tenants', 'shipment_routes.tenant_id', '=', 'tenants.id')
-            ->leftJoin('domains', function ($join) {
-                $join->on('tenants.id', '=', 'domains.tenant_id')
-                     ->whereRaw('domains.id = (select min(id) from domains where tenant_id = tenants.id)');
-            })
-            ->select(
-                'shipment_routes.*',
-                'tenants.company_name',
-                'tenants.status as tenant_status',
-                'tenants.sub_type',
-                'tenants.subdomain',
-                DB::raw("COALESCE(domains.domain, tenants.custom_domain) as custom_domain"),
-                DB::raw("COALESCE((SELECT ROUND(AVG(rating), 1) FROM reviews WHERE reviews.tenant_id = tenants.id), 0) as rating_avg"),
-                DB::raw("COALESCE((SELECT COUNT(id) FROM reviews WHERE reviews.tenant_id = tenants.id), 0) as rating_count")
-            )
-            ->where('sending_country_id', $originCountry->id)
-            ->where('receiving_country_id', $destCountry->id)
-            ->where('mode', $routeMode)
-            ->get();
+        $recommendationEngine = app(\App\Services\Recommendation\PartnerRecommendationEngine::class);
+        $recResult = $recommendationEngine->getRecommendations([
+            'origin_country_id' => $originCountry->id,
+            'destination_country_id' => $destCountry->id,
+            'mode' => $routeMode,
+            'weight_kg' => $weightInKg,
+        ]);
 
-        $sortedRoutes = $routes->sort(function ($a, $b) {
-            $subPriority = ['advanced' => 3, 'intermediate' => 2, 'starter' => 1];
-            $aSub = $subPriority[$a->sub_type] ?? 1;
-            $bSub = $subPriority[$b->sub_type] ?? 1;
-
-            if ($aSub !== $bSub) {
-                return $bSub <=> $aSub;
-            }
-
-            // Status Priority
-            $aActive = ($a->tenant_status === 'active') ? 1 : 0;
-            $bActive = ($b->tenant_status === 'active') ? 1 : 0;
-            if ($aActive !== $bActive) {
-                return $bActive <=> $aActive;
-            }
-
-            // Rating Priority
-            if ($a->rating_avg != $b->rating_avg) {
-                return $b->rating_avg <=> $a->rating_avg; // Higher rating first
-            }
-
-            // Rate Priority
-            return $a->shipping_rate <=> $b->shipping_rate; // Lower rate first
-        });
-
-        // Format for Vue search results list
         $formattedResults = [];
-        foreach ($sortedRoutes as $route) {
-            $sub = $route->custom_domain ?: ($route->subdomain ? $route->subdomain . '.respectmart.test' : 'respectmart.test');
+        $iconMap = [
+            'swift' => '⚡',
+            'savers' => '💰',
+            'trusted' => '★',
+            'convenient' => '🚪',
+            'flexible' => '📦',
+        ];
+
+        foreach ($recResult['recommendations'] as $rec) {
+            $partner = $rec['partner_attribution'];
+            $icon = $iconMap[$rec['service_key']] ?? '⚡';
+
             $formattedResults[] = [
-                'id' => $route->id,
-                'tenant_id' => $route->tenant_id,
-                'domain' => $sub,
-                'initial' => strtoupper(substr($route->company_name ?? 'C', 0, 1)),
-                'name' => $route->company_name ?? 'Verified Carrier',
-                'verified' => $route->tenant_status === 'active',
-                'rating' => number_format($route->rating_avg, 1),
-                'reviews' => $route->rating_count,
-                'location' => $originCountry->name . ' Depot',
-                'pickup' => 'Door-to-door',
+                'id' => $rec['quote_id'],
+                'quote_id' => $rec['quote_id'],
+                'tenant_id' => $partner['merchant_id'],
+                'domain' => 'freighteva.com',
+                'initial' => $icon,
+                'name' => $rec['service_name'],
+                'service_name' => $rec['service_name'],
+                'service_key' => $rec['service_key'],
+                'badge' => $rec['badge'],
+                'highlight' => $rec['highlight'],
+                'tagline' => $rec['tagline'],
+                'carrier_name' => $partner['company_name'],
+                'verified' => true,
+                'is_endorsed' => true,
+                'rating' => number_format($partner['rating_score'], 1),
+                'reviews' => $partner['rating_count'],
+                'location' => ($partner['metro_area'] ?: $originCountry->name) . ' Hub',
+                'pickup' => ($rec['features']['pickup_available'] ?? true) ? 'Door-to-door' : 'Depot drop-off',
                 'tags' => [
-                    $originCode . ' - ' . $destCode . ' specialty',
+                    $rec['badge'],
+                    $rec['highlight'],
                     ($routeMode === 'air') ? 'Air consolidation' : 'Ocean container',
-                    'Insured',
+                    'Insured & Protected',
                     'Live tracking'
                 ],
-                'days' => $route->min_delivery_day . '-' . $route->max_delivery_day . ' days',
-                'price' => '$' . number_format($route->shipping_rate, 2),
-                'total' => '~ $' . number_format($route->shipping_rate * $weight, 2) . ' USD',
-                'featured' => $route->sub_type === 'advanced'
+                'days' => $rec['transit_days'],
+                'price' => '$' . number_format($rec['base_rate'], 2),
+                'total' => '$' . number_format($rec['calculated_price'], 2) . ' ' . $rec['currency'],
+                'calculated_price' => $rec['calculated_price'],
+                'base_rate' => $rec['base_rate'],
+                'currency' => $rec['currency'],
+                'booking_token' => $rec['booking_token'],
+                'expires_at' => $rec['expires_at'],
+                'expires_in_seconds' => $rec['expires_in_seconds'],
+                'scores' => $rec['scores'],
+                'partner_attribution' => $partner,
+                'features' => $rec['features'],
+                'featured' => ($rec['service_key'] === 'swift' || $rec['service_key'] === 'trusted')
             ];
         }
 
         return response()->json([
             'success' => true,
-            'data' => $formattedResults
+            'data' => $formattedResults,
+            'meta' => [
+                'total_recommended' => count($formattedResults),
+                'quote_ttl_minutes' => $recResult['quote_ttl_minutes'],
+                'diagnostics' => $recResult['diagnostics'] ?? null,
+            ]
         ]);
     }
+
 
     /**
      * Resolve search string to 2-letter country code with IP awareness and smart city mapping.
