@@ -121,10 +121,13 @@ class UnifiedBookingController extends Controller
             }
         }
 
-        // 4. Generate Tracking AWB & Invoice Numbers
-        $awbNumber = 'EVA-' . strtoupper(Str::random(3)) . '-' . mt_rand(100000, 999999);
-        $invoicePrefix = 'EVA-INV';
-        $invoiceNo = (string)mt_rand(100000, 999999);
+        // 4. Generate Consistent Sequential Tracking AWB & Invoice Numbers
+        $nextId = (\App\Models\Shipment::max('id') ?? 0) + 1;
+        $formattedSeq = sprintf('%06d', $nextId);
+
+        $invoicePrefix = 'EVA';
+        $invoiceNo = $formattedSeq;
+        $awbNumber = 'EVA-AWB-' . $formattedSeq;
 
         $sender = $request->input('sender', []);
         $receiver = $request->input('receiver', []);
@@ -236,6 +239,26 @@ class UnifiedBookingController extends Controller
             'user_id' => $customerUser ? $customerUser->id : (auth()->id() ?: 1),
         ]);
 
+        // 6. Instantiate Core Tracking Entity (Triggers TrackingObserver -> TrackingHistory)
+        try {
+            $trackingStatus = \App\Models\TrackingStatus::where('name', 'Shipment Booked and Manifested')->first();
+            if (!$trackingStatus) {
+                $trackingStatus = \App\Models\TrackingStatus::create([
+                    'name' => 'Shipment Booked and Manifested',
+                ]);
+            }
+
+            $tracking = \App\Models\Tracking::create([
+                'shipment_id' => $shipment->id,
+                'tracking_number' => $shipment->awb_number,
+                'tracking_status_id' => $trackingStatus->id,
+                'tenant_id' => $shipment->tenant_id,
+                'external_tracking_status' => 'BOOKED',
+            ]);
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::warning('Tracking instantiation warning: ' . $e->getMessage());
+        }
+
         // Record initial tracking event
         $shipment->recordTrackingEvent(
             status: 'BOOKED',
@@ -247,6 +270,7 @@ class UnifiedBookingController extends Controller
                 'service_name' => $quote['service_name'] ?? 'Freighteva Service',
                 'protection_plan' => $protectionPlan,
                 'payment_intent_id' => $paymentIntentId,
+                'tracking_id' => isset($tracking) ? $tracking->id : null,
             ]
         );
 

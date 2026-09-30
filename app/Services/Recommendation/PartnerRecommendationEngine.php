@@ -151,29 +151,34 @@ class PartnerRecommendationEngine
             $effectiveRating = ($rawRating * $confidence) + ($tierBaseline * (1.0 - $confidence));
             $trustScore = max(40.0, min(100.0, round(($effectiveRating / 5.0) * 100.0, 1)));
 
-            // D. Convenience Score (0 - 100): Doorstep pickup, dropoff, radius
-            $convenienceScore = 40.0; // Base score
-            if ($capability?->pickup_available ?? true) {
-                $convenienceScore += 30.0;
+            // D. Convenience Score (0 - 100): Pickup option from route setup & radius
+            $convenienceScore = 30.0; // Base score
+            $pickupAvailable = property_exists($route, 'pickup_available') ? (bool)$route->pickup_available : ($capability?->pickup_available ?? true);
+            if ($pickupAvailable) {
+                $convenienceScore += 45.0;
             }
             if ($capability?->dropoff_available ?? true) {
                 $convenienceScore += 15.0;
             }
             if (($tenant->service_radius_km ?? 25) >= 30) {
-                $convenienceScore += 15.0;
+                $convenienceScore += 10.0;
             }
-            $convenienceScore = max(30.0, min(100.0, round($convenienceScore, 1)));
+            $convenienceScore = max(20.0, min(100.0, round($convenienceScore, 1)));
 
-            // E. Flexibility Score (0 - 100): Weight range, mode adaptability
-            $flexibilityScore = 50.0;
+            // E. Flexibility Score (0 - 100): Doorstep delivery from route setup & mode adaptability
+            $flexibilityScore = 30.0;
+            $doorstepDelivery = property_exists($route, 'doorstep_delivery') ? (bool)$route->doorstep_delivery : true;
+            if ($doorstepDelivery) {
+                $flexibilityScore += 45.0;
+            }
             $maxWeight = (float)($capability?->max_weight_kg ?? 500.0);
             if ($maxWeight >= 500) {
-                $flexibilityScore += 25.0;
+                $flexibilityScore += 15.0;
             }
             if ($capability?->freight_mode === 'both') {
-                $flexibilityScore += 25.0;
+                $flexibilityScore += 10.0;
             }
-            $flexibilityScore = max(30.0, min(100.0, round($flexibilityScore, 1)));
+            $flexibilityScore = max(20.0, min(100.0, round($flexibilityScore, 1)));
 
             // Composite Weighted Score
             $wSpeed = (float)($weights['speed'] ?? 25.0);
