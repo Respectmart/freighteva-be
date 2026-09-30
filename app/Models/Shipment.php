@@ -79,6 +79,14 @@ class Shipment extends Model
     }
 
     /**
+     * Get the core tracking record for this shipment.
+     */
+    public function tracking(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(Tracking::class, 'shipment_id');
+    }
+
+    /**
      * Helper to log a tracking event.
      */
     public function recordTrackingEvent(
