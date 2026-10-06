@@ -20,7 +20,10 @@ class TrackingController extends Controller
             ->orWhere('invoice_no', $cleanAwb)
             ->orWhereRaw("CONCAT(invoice_prefix, '-', invoice_no) = ?", [$cleanAwb])
             ->orWhere('id', is_numeric($cleanAwb) ? (int)$cleanAwb : 0)
-            ->with(['trackingEvents' => function ($q) {
+            ->orWhereHas('tracking', function ($q) use ($cleanAwb) {
+                $q->where('tracking_number', $cleanAwb);
+            })
+            ->with(['tracking', 'trackingEvents' => function ($q) {
                 $q->orderBy('event_time', 'asc')->orderBy('id', 'asc');
             }, 'tenant'])
             ->first();
@@ -88,6 +91,7 @@ class TrackingController extends Controller
             'data' => [
                 'id' => $shipment->id,
                 'tenant_id' => $shipment->tenant_id,
+                'tracking_number' => $shipment->tracking?->tracking_number,
                 'awb_number' => $shipment->awb_number,
                 'invoice_number' => $shipment->invoice_prefix . '-' . $shipment->invoice_no,
                 'status' => strtoupper($shipment->status),
