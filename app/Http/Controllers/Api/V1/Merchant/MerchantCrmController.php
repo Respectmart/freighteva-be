@@ -48,7 +48,7 @@ class MerchantCrmController extends Controller
             ], 404);
         }
 
-        $query = Shipment::where('tenant_id', $merchant->id)->with('trackingEvents');
+        $query = Shipment::where('tenant_id', $merchant->id)->with(['tracking', 'trackingEvents']);
 
         // Status Filter
         if ($request->filled('status') && $request->input('status') !== 'all') {
@@ -60,14 +60,17 @@ class MerchantCrmController extends Controller
             }
         }
 
-        // Search Filter (AWB, origin, destination)
+        // Search Filter (Tracking number, AWB, invoice, origin, destination)
         if ($request->filled('search')) {
             $s = $request->input('search');
             $query->where(function ($q) use ($s) {
                 $q->where('awb_number', 'like', "%{$s}%")
                   ->orWhere('invoice_no', 'like', "%{$s}%")
                   ->orWhere('origin', 'like', "%{$s}%")
-                  ->orWhere('destination', 'like', "%{$s}%");
+                  ->orWhere('destination', 'like', "%{$s}%")
+                  ->orWhereHas('tracking', function ($tq) use ($s) {
+                      $tq->where('tracking_number', 'like', "%{$s}%");
+                  });
             });
         }
 
@@ -102,7 +105,7 @@ class MerchantCrmController extends Controller
     {
         $merchant = $this->resolveMerchant($request);
 
-        $shipment = Shipment::with(['trackingEvents', 'exceptions'])->find($id);
+        $shipment = Shipment::with(['tracking', 'trackingEvents', 'exceptions'])->find($id);
 
         if (!$shipment) {
             return response()->json([
@@ -122,6 +125,7 @@ class MerchantCrmController extends Controller
             'success' => true,
             'data' => [
                 'id' => $shipment->id,
+                'tracking_number' => $shipment->tracking?->tracking_number,
                 'awb_number' => $shipment->awb_number,
                 'invoice_number' => $shipment->invoice_prefix . '-' . $shipment->invoice_no,
                 'status' => $shipment->status,

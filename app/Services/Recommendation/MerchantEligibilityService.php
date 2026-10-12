@@ -168,6 +168,15 @@ class MerchantEligibilityService
             ];
         }
 
+        // 3b. Check Appear on Freighteva Nomination Gate
+        if (property_exists($route, 'appear_on_freighteva') && ((int)$route->appear_on_freighteva === 0 || $route->appear_on_freighteva === false)) {
+            return [
+                'is_eligible' => false,
+                'reason_code' => 'NOT_NOMINATED_ON_FREIGHTEVA',
+                'reason_description' => 'Route is configured not to appear on Freighteva search results.',
+            ];
+        }
+
         // 4. Check Active Rate Gate
         $rate = (float)($route->shipping_rate ?? 0);
         if ($rate <= 0) {

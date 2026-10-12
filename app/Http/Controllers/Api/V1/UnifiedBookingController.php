@@ -4,12 +4,23 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Shipment;
+use App\Models\ShipmentReceiver;
+use App\Models\ShipmentSender;
 use App\Models\Tenant;
+use App\Models\Tracking;
+use App\Models\TrackingStatus;
+use App\Models\User;
 use App\Services\Audit\MarketplaceAuditService;
 use App\Services\Recommendation\QuoteTokenService;
+use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Stripe\PaymentIntent;
+use Stripe\Stripe;
 
 class UnifiedBookingController extends Controller
 {
@@ -22,6 +33,21 @@ class UnifiedBookingController extends Controller
     ) {
         $this->tokenService = $tokenService;
         $this->auditService = $auditService;
+    }
+
+    /**
+     * Generate unique standard tracking number (e.g., 9-digit format matching shipment tracker).
+     */
+    protected function generateTrackingNumber(): string
+    {
+        do {
+            $trackingNumber = '0';
+            for ($i = 0; $i < 8; $i++) {
+                $trackingNumber .= mt_rand(0, 9);
+            }
+        } while (Tracking::where('tracking_number', $trackingNumber)->exists());
+
+        return $trackingNumber;
     }
 
     /**
@@ -108,23 +134,26 @@ class UnifiedBookingController extends Controller
 
         if (!empty($stripeSecret) && !empty($paymentIntentId)) {
             try {
-                \Stripe\Stripe::setApiKey($stripeSecret);
-                $stripeIntent = \Stripe\PaymentIntent::retrieve($paymentIntentId);
+                Stripe::setApiKey($stripeSecret);
+                $stripeIntent = PaymentIntent::retrieve($paymentIntentId);
                 if ($stripeIntent->status !== 'succeeded') {
                     return response()->json([
                         'success' => false,
                         'message' => 'Stripe payment has not been successfully completed. PaymentIntent status: ' . $stripeIntent->status,
                     ], 422);
                 }
-            } catch (\Exception $e) {
-                \Illuminate\Support\Facades\Log::warning('Stripe PaymentIntent verification warning: ' . $e->getMessage());
+            } catch (Exception $e) {
+                Log::warning('Stripe PaymentIntent verification warning: ' . $e->getMessage());
             }
         }
 
-        // 4. Generate Tracking AWB & Invoice Numbers
-        $awbNumber = 'EVA-' . strtoupper(Str::random(3)) . '-' . mt_rand(100000, 999999);
-        $invoicePrefix = 'EVA-INV';
-        $invoiceNo = (string)mt_rand(100000, 999999);
+        // 4. Generate Consistent Sequential Invoice Number & Tracking Number
+        $nextId = (Shipment::max('id') ?? 0) + 1;
+        $formattedSeq = sprintf('%06d', $nextId);
+
+        $invoicePrefix = 'EVA';
+        $invoiceNo = $formattedSeq;
+        $trackingNumber = $this->generateTrackingNumber();
 
         $sender = $request->input('sender', []);
         $receiver = $request->input('receiver', []);
@@ -148,25 +177,25 @@ class UnifiedBookingController extends Controller
         $targetTenantId = $quote['tenant_id'] ?? 1;
 
         if (!empty($senderEmail)) {
-            $customerUser = \App\Models\User::where('email', $senderEmail)
+            $customerUser = User::where('email', $senderEmail)
                 ->where('tenant_id', $targetTenantId)
                 ->first();
 
             if (!$customerUser) {
                 $nameParts = explode(' ', trim($sender['name'] ?? 'Freight Customer'), 2);
-                $customerUser = \App\Models\User::create([
+                $customerUser = User::create([
                     'first_name' => $nameParts[0] ?? 'Freight',
                     'last_name' => $nameParts[1] ?? 'Customer',
                     'email' => $senderEmail,
                     'mobile' => $sender['phone'] ?? 'N/A',
-                    'password' => \Illuminate\Support\Facades\Hash::make('password123'),
+                    'password' => Hash::make('password123'),
                     'tenant_id' => $targetTenantId,
                 ]);
 
                 try {
                     $customerUser->assignRole('user');
-                } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\DB::table('model_has_roles')->insertOrIgnore([
+                } catch (Exception $e) {
+                    DB::table('model_has_roles')->insertOrIgnore([
                         'role_id' => 3,
                         'model_type' => 'App\\Models\\User',
                         'model_id' => $customerUser->id,
@@ -176,7 +205,7 @@ class UnifiedBookingController extends Controller
         }
 
         // Create ShipmentSender record
-        $shipmentSender = \App\Models\ShipmentSender::create([
+        $shipmentSender = ShipmentSender::create([
             'name' => $sender['name'] ?? 'Freight Customer',
             'company_name' => $sender['company'] ?? null,
             'email' => $senderEmail ?? 'customer@freighteva.com',
@@ -194,7 +223,7 @@ class UnifiedBookingController extends Controller
         $receiverFirstName = !empty($receiverNameParts[0]) ? $receiverNameParts[0] : 'Recipient';
         $receiverLastName = !empty($receiverNameParts[1]) ? $receiverNameParts[1] : 'Customer';
 
-        $shipmentReceiver = \App\Models\ShipmentReceiver::create([
+        $shipmentReceiver = ShipmentReceiver::create([
             'first_name' => substr($receiverFirstName, 0, 50),
             'last_name' => substr($receiverLastName, 0, 50),
             'email' => $receiver['email'] ?? ($senderEmail ?? 'receiver@freighteva.com'),
@@ -220,7 +249,7 @@ class UnifiedBookingController extends Controller
             'date_paid' => now()->toDateString(),
             'invoice_prefix' => $invoicePrefix,
             'invoice_no' => $invoiceNo,
-            'awb_number' => $awbNumber,
+            'awb_number' => null,
             'shipment_receiver_id' => $shipmentReceiver->id,
             'shipment_sender_id' => $shipmentSender->id,
             'freight_id' => str_contains(strtolower($quote['mode'] ?? ''), 'ocean') ? 1 : 2,
@@ -236,6 +265,26 @@ class UnifiedBookingController extends Controller
             'user_id' => $customerUser ? $customerUser->id : (auth()->id() ?: 1),
         ]);
 
+        // 6. Instantiate Core Tracking Entity (Triggers TrackingObserver -> TrackingHistory)
+        try {
+            $trackingStatus = TrackingStatus::where('name', 'Shipment Booked and Manifested')->first();
+            if (!$trackingStatus) {
+                $trackingStatus = TrackingStatus::create([
+                    'name' => 'Shipment Booked and Manifested',
+                ]);
+            }
+
+            $tracking = Tracking::create([
+                'shipment_id' => $shipment->id,
+                'tracking_number' => $trackingNumber,
+                'tracking_status_id' => $trackingStatus->id,
+                'tenant_id' => $shipment->tenant_id,
+                'external_tracking_status' => 'BOOKED',
+            ]);
+        } catch (Exception $e) {
+            Log::warning('Tracking instantiation warning: ' . $e->getMessage());
+        }
+
         // Record initial tracking event
         $shipment->recordTrackingEvent(
             status: 'BOOKED',
@@ -247,6 +296,8 @@ class UnifiedBookingController extends Controller
                 'service_name' => $quote['service_name'] ?? 'Freighteva Service',
                 'protection_plan' => $protectionPlan,
                 'payment_intent_id' => $paymentIntentId,
+                'tracking_id' => isset($tracking) ? $tracking->id : null,
+                'tracking_number' => $trackingNumber,
             ]
         );
 
@@ -258,7 +309,7 @@ class UnifiedBookingController extends Controller
             'message' => 'Shipment booking confirmed successfully on Freighteva!',
             'data' => [
                 'booking_id' => $shipment->id,
-                'awb_number' => $shipment->awb_number,
+                'tracking_number' => $trackingNumber,
                 'invoice_number' => $shipment->invoice_prefix . '-' . $shipment->invoice_no,
                 'service_name' => $quote['service_name'] ?? 'Freighteva Service',
                 'fulfillment_carrier' => $carrierName,
@@ -295,3 +346,4 @@ class UnifiedBookingController extends Controller
         };
     }
 }
+
