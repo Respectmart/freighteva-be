@@ -101,7 +101,7 @@ class TrackingController extends Controller
                 'destination' => $shipment->destination,
                 'weight_kg' => (float)$shipment->weight,
                 'mode' => ucfirst($shipment->mode),
-                'carrier' => $shipment->carrier ?: ($shipment->tenant?->name ?? 'Freighteva Partner'),
+                'carrier' => 'Freighteva Verified Carrier',
                 'pickup_schedule' => [
                     'date' => $shipment->pickup_date,
                     'time_slot' => $shipment->pickup_time_slot,
