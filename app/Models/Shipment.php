@@ -17,10 +17,10 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
     'payment_status',
     'date_paid',
     'tenant_id',
+    'fulfilled_by',
     'user_id',
     'invoice_prefix',
     'invoice_no',
-    'awb_number',
     'shipment_receiver_id',
     'shipment_sender_id',
     'freight_id',
@@ -84,6 +84,16 @@ class Shipment extends Model
     public function tracking(): \Illuminate\Database\Eloquent\Relations\HasOne
     {
         return $this->hasOne(Tracking::class, 'shipment_id');
+    }
+
+    /**
+     * Safe accessor for awb_number fallback.
+     */
+    public function getAwbNumberAttribute(): ?string
+    {
+        return $this->tracking?->tracking_number 
+            ?? $this->attributes['master_tracking_number'] 
+            ?? (!empty($this->attributes['invoice_prefix']) ? $this->attributes['invoice_prefix'] . '-' . $this->attributes['invoice_no'] : null);
     }
 
     /**
