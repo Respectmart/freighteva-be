@@ -169,16 +169,15 @@ class UnifiedBookingController extends Controller
             $destString = 'Destination Depot';
         }
 
-        $carrierName = $quote['tenant_company'] ?? ($quote['service_name'] ?? 'Freighteva Partner');
+        $carrierName = 'Freighteva Verified Carrier';
 
-        // Find or create customer user scoped to the specific merchant tenant
+        // Find or create customer user on Central Freighteva (tenant_id = null)
         $senderEmail = $sender['email'] ?? null;
         $customerUser = null;
-        $targetTenantId = $quote['tenant_id'] ?? 1;
 
         if (!empty($senderEmail)) {
             $customerUser = User::where('email', $senderEmail)
-                ->where('tenant_id', $targetTenantId)
+                ->whereNull('tenant_id')
                 ->first();
 
             if (!$customerUser) {
@@ -189,7 +188,7 @@ class UnifiedBookingController extends Controller
                     'email' => $senderEmail,
                     'mobile' => $sender['phone'] ?? 'N/A',
                     'password' => Hash::make('password123'),
-                    'tenant_id' => $targetTenantId,
+                    'tenant_id' => null,
                 ]);
 
                 try {
@@ -237,8 +236,10 @@ class UnifiedBookingController extends Controller
         ]);
 
         // 5. Create Shipment Record in Database
+        $fulfillingTenantId = !empty($quote['tenant_id']) ? (int) $quote['tenant_id'] : 1;
         $shipment = Shipment::create([
-            'tenant_id' => $quote['tenant_id'] ?? 1,
+            'tenant_id' => null,
+            'fulfilled_by' => $fulfillingTenantId,
             'origin' => $originString,
             'destination' => $destString,
             'weight' => (float)($quote['weight_kg'] ?? 1.0),
@@ -249,7 +250,6 @@ class UnifiedBookingController extends Controller
             'date_paid' => now()->toDateString(),
             'invoice_prefix' => $invoicePrefix,
             'invoice_no' => $invoiceNo,
-            'awb_number' => null,
             'shipment_receiver_id' => $shipmentReceiver->id,
             'shipment_sender_id' => $shipmentSender->id,
             'freight_id' => str_contains(strtolower($quote['mode'] ?? ''), 'ocean') ? 1 : 2,

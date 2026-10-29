@@ -16,9 +16,9 @@ class TrackingController extends Controller
     {
         $cleanAwb = trim($awb);
 
-        $shipment = Shipment::where('awb_number', $cleanAwb)
-            ->orWhere('invoice_no', $cleanAwb)
+        $shipment = Shipment::where('invoice_no', $cleanAwb)
             ->orWhereRaw("CONCAT(invoice_prefix, '-', invoice_no) = ?", [$cleanAwb])
+            ->orWhere('master_tracking_number', $cleanAwb)
             ->orWhere('id', is_numeric($cleanAwb) ? (int)$cleanAwb : 0)
             ->orWhereHas('tracking', function ($q) use ($cleanAwb) {
                 $q->where('tracking_number', $cleanAwb);
@@ -101,7 +101,7 @@ class TrackingController extends Controller
                 'destination' => $shipment->destination,
                 'weight_kg' => (float)$shipment->weight,
                 'mode' => ucfirst($shipment->mode),
-                'carrier' => $shipment->carrier ?: ($shipment->tenant?->name ?? 'Freighteva Partner'),
+                'carrier' => 'Freighteva Verified Carrier',
                 'pickup_schedule' => [
                     'date' => $shipment->pickup_date,
                     'time_slot' => $shipment->pickup_time_slot,

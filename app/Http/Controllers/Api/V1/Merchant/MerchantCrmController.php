@@ -64,8 +64,8 @@ class MerchantCrmController extends Controller
         if ($request->filled('search')) {
             $s = $request->input('search');
             $query->where(function ($q) use ($s) {
-                $q->where('awb_number', 'like', "%{$s}%")
-                  ->orWhere('invoice_no', 'like', "%{$s}%")
+                $q->where('invoice_no', 'like', "%{$s}%")
+                  ->orWhere('master_tracking_number', 'like', "%{$s}%")
                   ->orWhere('origin', 'like', "%{$s}%")
                   ->orWhere('destination', 'like', "%{$s}%")
                   ->orWhereHas('tracking', function ($tq) use ($s) {
