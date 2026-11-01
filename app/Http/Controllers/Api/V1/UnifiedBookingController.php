@@ -265,6 +265,29 @@ class UnifiedBookingController extends Controller
             'user_id' => $customerUser ? $customerUser->id : (auth()->id() ?: 1),
         ]);
 
+        // 5b. Create Shipment Item Record for Cargo / Package Description
+        try {
+            DB::table('shipment_items')->insert([
+                'shipment_id' => $shipment->id,
+                'category_id' => 1,
+                'product_link' => !empty($cargo['item_description']) ? substr($cargo['item_description'], 0, 190) : 'General Cargo & Personal Items',
+                'vendor' => 'Freighteva Marketplace',
+                'price_value' => (float)($cargo['declared_value'] ?? 100),
+                'amount' => $shipment->amount,
+                'qty' => (int)($cargo['quantity'] ?? 1),
+                'weight' => (float)$shipment->weight,
+                'length' => (float)($cargo['length'] ?? 10),
+                'width' => (float)($cargo['width'] ?? 10),
+                'height' => (float)($cargo['height'] ?? 10),
+                'instructions' => !empty($cargo['package_type']) ? $cargo['package_type'] : 'Box / Parcel',
+                'tenant_id' => $shipment->tenant_id,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } catch (Exception $e) {
+            Log::warning('Could not create shipment_items row: ' . $e->getMessage());
+        }
+
         // 6. Instantiate Core Tracking Entity (Triggers TrackingObserver -> TrackingHistory)
         try {
             $trackingStatus = TrackingStatus::where('name', 'Shipment Booked and Manifested')->first();
