@@ -51,9 +51,11 @@ class SearchController extends Controller
         foreach ($routeCountriesQuery as $country) {
             $suggestions[] = [
                 'id' => $country->id,
-                'city' => $country->capital ?? '',
+                'city' => '',
                 'country' => $country->name,
-                'iso_code' => $country->iso_code_1
+                'display_name' => $country->name,
+                'iso_code' => $country->iso_code_1,
+                'is_country' => true,
             ];
         }
 
@@ -128,9 +130,12 @@ class SearchController extends Controller
 
             foreach ($globalCountries as $country) {
                 $suggestions[] = [
-                    'city' => $country->capital ?? '',
+                    'id' => $country->id,
+                    'city' => '',
                     'country' => $country->name,
-                    'iso_code' => $country->iso_code_1
+                    'display_name' => $country->name,
+                    'iso_code' => $country->iso_code_1,
+                    'is_country' => true,
                 ];
             }
         }

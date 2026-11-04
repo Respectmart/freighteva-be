@@ -333,6 +333,7 @@ class UnifiedBookingController extends Controller
             'data' => [
                 'booking_id' => $shipment->id,
                 'tracking_number' => $trackingNumber,
+                'awb_number' => $trackingNumber,
                 'invoice_number' => $shipment->invoice_prefix . '-' . $shipment->invoice_no,
                 'service_name' => $quote['service_name'] ?? 'Freighteva Service',
                 'fulfillment_carrier' => $carrierName,
