@@ -30,7 +30,7 @@ class SmartLocationController extends Controller
             ]);
         }
 
-        $cacheKey = "smart_loc_" . md5("{$q}_{$type}_{$biasCountry}_{$lat}_{$lon}");
+        $cacheKey = "smart_loc_v2_" . md5("{$q}_{$type}_{$biasCountry}_{$lat}_{$lon}");
 
         try {
             $results = Cache::driver('file')->remember($cacheKey, 86400, function () use ($q, $type, $biasCountry, $lat, $lon) {
@@ -487,13 +487,20 @@ class SmartLocationController extends Controller
         foreach ($countries as $c) {
             $isExactCountry = (strcasecmp($c->name, $cleanQ) === 0 || strcasecmp($c->iso_code_1, $cleanQ) === 0);
             $isPrefixCountry = (stripos($c->name, $cleanQ) === 0);
+            $isCountryMatch = ($isExactCountry || $isPrefixCountry || stripos($c->name, $cleanQ) !== false);
 
-            $displayName = $c->name;
-            $city = $c->capital ?: $c->name;
+            $isCapitalMatch = (!empty($c->capital) && stripos($c->capital, $cleanQ) === 0);
 
-            if (stripos($c->capital, $cleanQ) === 0 && !empty($c->capital)) {
+            if ($isCapitalMatch && !$isCountryMatch) {
+                // User specifically typed the capital city (e.g. "Abuja")
                 $displayName = "{$c->capital}, {$c->name}";
                 $city = $c->capital;
+                $isCountry = false;
+            } else {
+                // User searched for or matched the country concise name (e.g. "Nigeria")
+                $displayName = $c->name;
+                $city = '';
+                $isCountry = true;
             }
 
             $routeBonus = in_array($c->id, $activeRouteCountryIds) ? 5 : 0;
@@ -507,6 +514,7 @@ class SmartLocationController extends Controller
                 'country' => $c->name,
                 'iso_code' => $c->iso_code_1,
                 'postal_code' => '',
+                'is_country' => $isCountry,
                 'flag' => $this->countryCodeToEmoji($c->iso_code_1),
                 'is_local' => false,
                 'source' => 'database',
