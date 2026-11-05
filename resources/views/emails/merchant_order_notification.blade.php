@@ -41,7 +41,7 @@
             <div class="section-title">Order Information</div>
             <table class="details-table">
                 <tr>
-                    <td class="label">Tracking / AWB #:</td>
+                    <td class="label">Tracking Number:</td>
                     <td class="value" style="color: #0b1f3a; font-family: monospace; font-size: 15px;">{{ $trackingNumber }}</td>
                 </tr>
                 <tr>
