@@ -93,10 +93,6 @@
                     @endif
                 </div>
             </div>
-
-            <div class="btn-container">
-                <a href="{{ $portalUrl }}" class="btn">View & Accept Booking in Portal &rarr;</a>
-            </div>
         </div>
         <div class="footer">
             <p style="margin: 0 0 6px 0;">This is an automated notification from Freighteva Marketplace.</p>
