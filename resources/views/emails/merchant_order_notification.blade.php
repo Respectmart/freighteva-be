@@ -97,10 +97,6 @@
             <div class="btn-container">
                 <a href="{{ $portalUrl }}" class="btn">View & Accept Booking in Portal &rarr;</a>
             </div>
-
-            <p style="font-size: 12px; color: #6b7280; text-align: center; margin: 16px 0 0 0;">
-                Direct link: <a href="{{ $portalUrl }}" style="color: #0284c7;">{{ $portalUrl }}</a>
-            </p>
         </div>
         <div class="footer">
             <p style="margin: 0 0 6px 0;">This is an automated notification from Freighteva Marketplace.</p>
