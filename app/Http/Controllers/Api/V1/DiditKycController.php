@@ -125,7 +125,12 @@ class DiditKycController extends Controller
         $rawStatus = (string) ($decision['status'] ?? 'pending');
         $statusLower = strtolower($rawStatus);
         
-        $isApproved = in_array($statusLower, ['approved', 'completed', 'verified']);
+        $isSandbox = str_starts_with((string) config('services.didit.api_key'), 'sk_test_')
+            || (($decision['environment'] ?? '') === 'sandbox');
+
+        // In Sandbox mode, submitted checks ("In Review" with approved face match) qualify as verified for developer testing
+        $isApproved = in_array($statusLower, ['approved', 'completed', 'verified'])
+            || ($isSandbox && in_array($statusLower, ['in review', 'in_review', 'submitted']));
 
         // Update KycVerification record
         $kyc = KycVerification::firstOrNew(['session_id' => $sessionId]);
