@@ -12,6 +12,7 @@ class BookingSession extends Model
     protected $table = 'booking_sessions';
 
     protected $fillable = [
+        'token_hash',
         'booking_token',
         'customer_name',
         'customer_email',

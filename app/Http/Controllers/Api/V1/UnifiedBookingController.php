@@ -332,10 +332,11 @@ class UnifiedBookingController extends Controller
 
         // Mark Abandoned Booking Session as completed
         try {
-            $token = $request->input('booking_token');
-            BookingSession::where(function ($q) use ($token, $senderEmail) {
-                if ($token) {
-                    $q->where('booking_token', $token);
+            $token = (string) ($request->input('booking_token') ?? '');
+            $tokenHash = !empty($token) ? hash('sha256', $token) : null;
+            BookingSession::where(function ($q) use ($tokenHash, $senderEmail) {
+                if ($tokenHash) {
+                    $q->where('token_hash', $tokenHash);
                 }
                 if ($senderEmail) {
                     $q->orWhere('customer_email', $senderEmail);
@@ -389,13 +390,15 @@ class UnifiedBookingController extends Controller
         ]);
 
         $email = strtolower(trim((string) $request->input('customer_email')));
-        $token = $request->input('booking_token') ?: ('session_' . md5($email . ($request->input('route_from') ?? '')));
+        $token = (string) ($request->input('booking_token') ?? '');
+        $tokenHash = !empty($token) ? hash('sha256', $token) : ('session_' . md5($email . ($request->input('route_from') ?? '')));
 
         $session = BookingSession::updateOrCreate(
             [
-                'booking_token' => $token,
+                'token_hash' => $tokenHash,
             ],
             [
+                'booking_token' => $token,
                 'customer_name' => $request->input('customer_name') ?: 'Shipper',
                 'customer_email' => $email,
                 'customer_phone' => $request->input('customer_phone'),
