@@ -102,7 +102,7 @@ class UnifiedBookingController extends Controller
             'cargo.item_description' => 'nullable|string|max:500',
             'cargo.declared_value' => 'nullable|numeric|min:0',
             'cargo.package_type' => 'nullable|string|max:50',
-            'protection_plan' => 'nullable|string|in:basic,premium',
+            'protection_plan' => 'nullable|string|in:basic,premium,all_risk',
             'payment.payment_method' => 'nullable|string|in:card,wallet,demo_checkout,stripe',
             'payment.payment_intent_id' => 'nullable|string',
             'payment_intent_id' => 'nullable|string',
@@ -121,10 +121,12 @@ class UnifiedBookingController extends Controller
 
         $quote = $verification['payload'];
 
-        // 2. Compute Total Price with Protection Plan
+        // 2. Compute Total Price with Protection Plan (Handling + All-Risk Protection 10%)
         $basePrice = (float)($quote['calculated_price'] ?? 0);
-        $protectionPlan = $request->input('protection_plan', 'basic');
-        $protectionFee = ($protectionPlan === 'premium') ? 15.00 : 0.00;
+        $protectionPlan = $request->input('protection_plan', 'all_risk');
+        $protectionFee = ($protectionPlan === 'all_risk') 
+            ? round($basePrice * 0.10, 2) 
+            : (($protectionPlan === 'premium') ? 15.00 : 0.00);
         $totalAmount = round($basePrice + $protectionFee, 2);
         $currency = $quote['currency'] ?? 'USD';
 
