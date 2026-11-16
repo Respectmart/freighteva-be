@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\BookingSession;
 use App\Models\Shipment;
 use App\Models\ShipmentReceiver;
 use App\Models\ShipmentSender;
@@ -329,6 +330,24 @@ class UnifiedBookingController extends Controller
         // Record Marketplace Audit Log
         $this->auditService->logBookingCreated($shipment, $quote);
 
+        // Mark Abandoned Booking Session as completed
+        try {
+            $token = $request->input('booking_token');
+            BookingSession::where(function ($q) use ($token, $senderEmail) {
+                if ($token) {
+                    $q->where('booking_token', $token);
+                }
+                if ($senderEmail) {
+                    $q->orWhere('customer_email', $senderEmail);
+                }
+            })->where('status', '!=', 'completed')->update([
+                'status' => 'completed',
+                'current_step' => 6,
+            ]);
+        } catch (Exception $e) {
+            Log::warning('Failed to update booking session status: ' . $e->getMessage());
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Shipment booking confirmed successfully on Freighteva!',
@@ -357,6 +376,51 @@ class UnifiedBookingController extends Controller
                 'created_at' => $shipment->created_at?->toIso8601String(),
             ],
         ], 201);
+    }
+
+    /**
+     * Track/update a booking session for abandoned cart follow-up (Task 5).
+     */
+    public function trackSession(Request $request): JsonResponse
+    {
+        $request->validate([
+            'customer_email' => 'required|email',
+            'current_step' => 'nullable|integer',
+        ]);
+
+        $email = strtolower(trim((string) $request->input('customer_email')));
+        $token = $request->input('booking_token') ?: ('session_' . md5($email . ($request->input('route_from') ?? '')));
+
+        $session = BookingSession::updateOrCreate(
+            [
+                'booking_token' => $token,
+            ],
+            [
+                'customer_name' => $request->input('customer_name') ?: 'Shipper',
+                'customer_email' => $email,
+                'customer_phone' => $request->input('customer_phone'),
+                'route_from' => $request->input('route_from'),
+                'route_to' => $request->input('route_to'),
+                'cargo_details' => $request->input('cargo'),
+                'base_price' => (float) $request->input('base_price', 0),
+                'protection_fee' => (float) $request->input('protection_fee', 0),
+                'total_price' => (float) $request->input('total_price', 0),
+                'currency' => $request->input('currency', 'USD'),
+                'current_step' => (int) $request->input('current_step', 1),
+                'is_kyc_verified' => (bool) $request->input('is_kyc_verified', false),
+                'status' => 'pending',
+            ]
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Booking session tracked.',
+            'data' => [
+                'session_id' => $session->id,
+                'booking_token' => $session->booking_token,
+                'current_step' => $session->current_step,
+            ],
+        ]);
     }
 
     /**

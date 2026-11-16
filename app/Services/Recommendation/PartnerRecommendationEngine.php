@@ -351,6 +351,7 @@ class PartnerRecommendationEngine
         return [
             'service_name' => $identityMeta['name'],
             'service_key' => $identityKey,
+            'unit_label' => $candidate['unit_label'] ?? null,
             'badge' => $identityMeta['badge'],
             'highlight' => $identityMeta['highlight'],
             'tagline' => $identityMeta['tagline'],

@@ -48,7 +48,7 @@ class MerchantEligibilityService
         $excluded = [];
 
         foreach ($allTenants as $tenant) {
-            $evaluation = $this->evaluateSingleTenant($tenant, $originCountryId, $destCountryId, $routeMode, $weightKg);
+            $evaluation = $this->evaluateSingleTenant($tenant, $originCountryId, $destCountryId, $routeMode, $weightKg, $params);
 
             if ($evaluation['is_eligible']) {
                 $eligible[] = [
@@ -60,6 +60,8 @@ class MerchantEligibilityService
                     'min_days' => $evaluation['min_days'],
                     'max_days' => $evaluation['max_days'],
                     'base_rate' => $evaluation['base_rate'],
+                    'unit_label' => $evaluation['unit_label'] ?? null,
+                    'is_unit_based' => $evaluation['is_unit_based'] ?? false,
                 ];
             } else {
                 $excluded[] = [
@@ -83,7 +85,7 @@ class MerchantEligibilityService
     /**
      * Evaluate a single tenant against endorsement and route criteria.
      */
-    public function evaluateSingleTenant(Tenant $tenant, ?int $originCountryId, ?int $destCountryId, string $routeMode, float $weightKg): array
+    public function evaluateSingleTenant(Tenant $tenant, ?int $originCountryId, ?int $destCountryId, string $routeMode, float $weightKg, array $params = []): array
     {
         // 1. Check Active Status Gate
         if (!$tenant->active && $tenant->status !== 'active') {
@@ -177,8 +179,39 @@ class MerchantEligibilityService
             ];
         }
 
-        // 4. Check Active Rate Gate
+        // 4. Check Active Rate Gate & Ocean Load Type Pricing
         $rate = (float)($route->shipping_rate ?? 0);
+        $packageType = strtolower(trim($params['ocean_package_type'] ?? ''));
+        $quantity = max(1, (int)($params['ocean_quantity'] ?? 1));
+        $unitLabel = null;
+        $isUnitBased = false;
+
+        if ($routeMode === 'ocean' && !empty($packageType) && $packageType !== 'weight') {
+            $matchedRate = null;
+            if (str_contains($packageType, 'pallet') && !empty($route->pallet_rate)) {
+                $matchedRate = (float)$route->pallet_rate;
+                $unitLabel = 'Pallet';
+            } elseif (str_contains($packageType, 'drum') && !empty($route->drum_rate)) {
+                $matchedRate = (float)$route->drum_rate;
+                $unitLabel = 'Drum';
+            } elseif (str_contains($packageType, 'vehicle') && !empty($route->vehicle_rate)) {
+                $matchedRate = (float)$route->vehicle_rate;
+                $unitLabel = 'Vehicle';
+            } elseif (str_contains($packageType, 'box') && !empty($route->box_rate)) {
+                $matchedRate = (float)$route->box_rate;
+                $unitLabel = 'Box';
+            } elseif (str_contains($packageType, 'sack')) {
+                $matchedRate = !empty($route->box_rate) ? (float)$route->box_rate : ((float)($route->pallet_rate ?? 0) / 10);
+                $unitLabel = 'Sack';
+            }
+
+            if ($matchedRate !== null && $matchedRate > 0) {
+                $rate = $matchedRate;
+                $calculatedPrice = round($rate * $quantity, 2);
+                $isUnitBased = true;
+            }
+        }
+
         if ($rate <= 0) {
             return [
                 'is_eligible' => false,
@@ -187,12 +220,12 @@ class MerchantEligibilityService
             ];
         }
 
-        // 5. Check Optional Merchant Capability Bounds if configured
+        // 5. Check Optional Merchant Capability Bounds if configured (skip for unit packages)
         $capability = $tenant->capabilities->first(function ($cap) use ($routeMode) {
             return $cap->is_active && ($cap->freight_mode === $routeMode || $cap->freight_mode === 'both');
         });
 
-        if ($capability) {
+        if ($capability && !$isUnitBased) {
             if ($weightKg < (float)$capability->min_weight_kg || $weightKg > (float)$capability->max_weight_kg) {
                 return [
                     'is_eligible' => false,
@@ -204,7 +237,9 @@ class MerchantEligibilityService
 
         $minDays = (int)($route->min_delivery_day ?: ($capability->min_transit_days ?? 4));
         $maxDays = (int)($route->max_delivery_day ?: ($capability->max_transit_days ?? 8));
-        $calculatedPrice = round($rate * $weightKg, 2);
+        if (!$isUnitBased) {
+            $calculatedPrice = round($rate * $weightKg, 2);
+        }
 
         return [
             'is_eligible' => true,
@@ -215,6 +250,8 @@ class MerchantEligibilityService
             'min_days' => $minDays,
             'max_days' => $maxDays,
             'base_rate' => $rate,
+            'unit_label' => $unitLabel,
+            'is_unit_based' => $isUnitBased,
         ];
     }
 }

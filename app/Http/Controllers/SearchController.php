@@ -380,6 +380,8 @@ class SearchController extends Controller
         // Air Freight or Ocean Freight: Generate Top Curated Freighteva Recommendations
         $routeMode = ($mode === 'Ocean Freight') ? 'ocean' : 'air';
         $weightInKg = ($unit === 'lb') ? $weight * 0.453592 : $weight;
+        $oceanPackageType = $request->input('ocean_package_type', 'Weight');
+        $oceanQuantity = (int)$request->input('ocean_quantity', 1);
 
         $recommendationEngine = app(\App\Services\Recommendation\PartnerRecommendationEngine::class);
         $recResult = $recommendationEngine->getRecommendations([
@@ -387,6 +389,8 @@ class SearchController extends Controller
             'destination_country_id' => $destCountry->id,
             'mode' => $routeMode,
             'weight_kg' => $weightInKg,
+            'ocean_package_type' => $oceanPackageType,
+            'ocean_quantity' => $oceanQuantity,
         ]);
 
         $formattedResults = [];
@@ -433,6 +437,7 @@ class SearchController extends Controller
                 'total' => '$' . number_format($rec['calculated_price'], 2) . ' ' . $rec['currency'],
                 'calculated_price' => $rec['calculated_price'],
                 'base_rate' => $rec['base_rate'],
+                'unit_label' => $rec['unit_label'] ?? null,
                 'currency' => $rec['currency'],
                 'booking_token' => $rec['booking_token'],
                 'expires_at' => $rec['expires_at'],
