@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Mail\MerchantOrderNotificationMail;
 use App\Models\BookingSession;
 use App\Models\Shipment;
 use App\Models\ShipmentReceiver;
@@ -19,6 +20,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Stripe\PaymentIntent;
 use Stripe\Stripe;
@@ -345,8 +347,32 @@ class UnifiedBookingController extends Controller
                 'status' => 'completed',
                 'current_step' => 6,
             ]);
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             Log::warning('Failed to update booking session status: ' . $e->getMessage());
+        }
+
+        // 7. Dispatch Merchant Order Notification Email
+        try {
+            $merchant = Tenant::with('users')->find($fulfillingTenantId);
+            $merchantEmail = $merchant?->official_email
+                ?: ($merchant?->email
+                ?: $merchant?->users->first()?->email);
+
+            if (!empty($merchantEmail)) {
+                Mail::to($merchantEmail)->send(
+                    new MerchantOrderNotificationMail(
+                        shipment: $shipment,
+                        merchant: $merchant,
+                        quote: $quote,
+                        sender: $sender,
+                        receiver: $receiver,
+                        cargo: $cargo,
+                        trackingNumber: $trackingNumber
+                    )
+                );
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Merchant order notification email dispatch failed: ' . $e->getMessage());
         }
 
         return response()->json([
