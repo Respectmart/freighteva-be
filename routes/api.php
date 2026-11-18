@@ -37,6 +37,7 @@ Route::prefix('v1')->group(function () {
     // Unified In-Platform Booking Journey (Module 4)
     Route::prefix('bookings')->group(function () {
         Route::post('/verify-quote', [\App\Http\Controllers\Api\V1\UnifiedBookingController::class, 'verifyQuote'])->name('api.v1.bookings.verify');
+        Route::post('/track-session', [\App\Http\Controllers\Api\V1\UnifiedBookingController::class, 'trackSession'])->name('api.v1.bookings.track-session');
         Route::post('/create', [\App\Http\Controllers\Api\V1\UnifiedBookingController::class, 'createBooking'])->name('api.v1.bookings.create');
     });
 
@@ -44,6 +45,14 @@ Route::prefix('v1')->group(function () {
     Route::prefix('payments')->group(function () {
         Route::get('/config', [\App\Http\Controllers\Api\V1\StripePaymentController::class, 'config'])->name('api.v1.payments.config');
         Route::post('/create-intent', [\App\Http\Controllers\Api\V1\StripePaymentController::class, 'createIntent'])->name('api.v1.payments.create-intent');
+    });
+
+    // Didit KYC Verification Integration
+    Route::prefix('kyc')->group(function () {
+        Route::get('/status', [\App\Http\Controllers\Api\V1\DiditKycController::class, 'checkStatus'])->name('api.v1.kyc.status');
+        Route::post('/session', [\App\Http\Controllers\Api\V1\DiditKycController::class, 'createSession'])->name('api.v1.kyc.session');
+        Route::post('/verify', [\App\Http\Controllers\Api\V1\DiditKycController::class, 'verifySession'])->name('api.v1.kyc.verify');
+        Route::post('/test-approve', [\App\Http\Controllers\Api\V1\DiditKycController::class, 'testApprove'])->name('api.v1.kyc.test-approve');
     });
 
     // Admin Endorsement, Analytics & Audit Trail APIs (Module 1 & Module 6)

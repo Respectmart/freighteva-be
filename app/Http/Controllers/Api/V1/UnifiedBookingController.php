@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Mail\MerchantOrderNotificationMail;
+use App\Models\BookingSession;
 use App\Models\Shipment;
 use App\Models\ShipmentReceiver;
 use App\Models\ShipmentSender;
@@ -104,7 +105,7 @@ class UnifiedBookingController extends Controller
             'cargo.item_description' => 'nullable|string|max:500',
             'cargo.declared_value' => 'nullable|numeric|min:0',
             'cargo.package_type' => 'nullable|string|max:50',
-            'protection_plan' => 'nullable|string|in:basic,premium',
+            'protection_plan' => 'nullable|string|in:basic,premium,all_risk',
             'payment.payment_method' => 'nullable|string|in:card,wallet,demo_checkout,stripe',
             'payment.payment_intent_id' => 'nullable|string',
             'payment_intent_id' => 'nullable|string',
@@ -123,10 +124,12 @@ class UnifiedBookingController extends Controller
 
         $quote = $verification['payload'];
 
-        // 2. Compute Total Price with Protection Plan
+        // 2. Compute Total Price with Protection Plan (Handling + All-Risk Protection 10%)
         $basePrice = (float)($quote['calculated_price'] ?? 0);
-        $protectionPlan = $request->input('protection_plan', 'basic');
-        $protectionFee = ($protectionPlan === 'premium') ? 15.00 : 0.00;
+        $protectionPlan = $request->input('protection_plan', 'all_risk');
+        $protectionFee = ($protectionPlan === 'all_risk') 
+            ? round($basePrice * 0.10, 2) 
+            : (($protectionPlan === 'premium') ? 15.00 : 0.00);
         $totalAmount = round($basePrice + $protectionFee, 2);
         $currency = $quote['currency'] ?? 'USD';
 
@@ -329,6 +332,25 @@ class UnifiedBookingController extends Controller
         // Record Marketplace Audit Log
         $this->auditService->logBookingCreated($shipment, $quote);
 
+        // Mark Abandoned Booking Session as completed
+        try {
+            $token = (string) ($request->input('booking_token') ?? '');
+            $tokenHash = !empty($token) ? hash('sha256', $token) : null;
+            BookingSession::where(function ($q) use ($tokenHash, $senderEmail) {
+                if ($tokenHash) {
+                    $q->where('token_hash', $tokenHash);
+                }
+                if ($senderEmail) {
+                    $q->orWhere('customer_email', $senderEmail);
+                }
+            })->where('status', '!=', 'completed')->update([
+                'status' => 'completed',
+                'current_step' => 6,
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Failed to update booking session status: ' . $e->getMessage());
+        }
+
         // 7. Dispatch Merchant Order Notification Email
         try {
             $merchant = Tenant::with('users')->find($fulfillingTenantId);
@@ -381,6 +403,53 @@ class UnifiedBookingController extends Controller
                 'created_at' => $shipment->created_at?->toIso8601String(),
             ],
         ], 201);
+    }
+
+    /**
+     * Track/update a booking session for abandoned cart follow-up (Task 5).
+     */
+    public function trackSession(Request $request): JsonResponse
+    {
+        $request->validate([
+            'customer_email' => 'required|email',
+            'current_step' => 'nullable|integer',
+        ]);
+
+        $email = strtolower(trim((string) $request->input('customer_email')));
+        $token = (string) ($request->input('booking_token') ?? '');
+        $tokenHash = !empty($token) ? hash('sha256', $token) : ('session_' . md5($email . ($request->input('route_from') ?? '')));
+
+        $session = BookingSession::updateOrCreate(
+            [
+                'token_hash' => $tokenHash,
+            ],
+            [
+                'booking_token' => $token,
+                'customer_name' => $request->input('customer_name') ?: 'Shipper',
+                'customer_email' => $email,
+                'customer_phone' => $request->input('customer_phone'),
+                'route_from' => $request->input('route_from'),
+                'route_to' => $request->input('route_to'),
+                'cargo_details' => $request->input('cargo'),
+                'base_price' => (float) $request->input('base_price', 0),
+                'protection_fee' => (float) $request->input('protection_fee', 0),
+                'total_price' => (float) $request->input('total_price', 0),
+                'currency' => $request->input('currency', 'USD'),
+                'current_step' => (int) $request->input('current_step', 1),
+                'is_kyc_verified' => (bool) $request->input('is_kyc_verified', false),
+                'status' => 'pending',
+            ]
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Booking session tracked.',
+            'data' => [
+                'session_id' => $session->id,
+                'booking_token' => $session->booking_token,
+                'current_step' => $session->current_step,
+            ],
+        ]);
     }
 
     /**
