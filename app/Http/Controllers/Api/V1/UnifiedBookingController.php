@@ -191,10 +191,14 @@ class UnifiedBookingController extends Controller
                     'first_name' => $nameParts[0] ?? 'Freight',
                     'last_name' => $nameParts[1] ?? 'Customer',
                     'email' => $senderEmail,
+                    'email_verified_at' => now(),
                     'mobile' => $sender['phone'] ?? 'N/A',
                     'password' => Hash::make('password123'),
                     'tenant_id' => null,
                 ]);
+
+                // Ensure email_verified_at is explicitly persisted
+                $customerUser->forceFill(['email_verified_at' => now()])->save();
 
                 try {
                     $customerUser->assignRole('user');
@@ -204,6 +208,11 @@ class UnifiedBookingController extends Controller
                         'model_type' => 'App\\Models\\User',
                         'model_id' => $customerUser->id,
                     ]);
+                }
+            } else {
+                // If user exists but email is not verified, auto-verify now upon successful booking
+                if (is_null($customerUser->email_verified_at)) {
+                    $customerUser->forceFill(['email_verified_at' => now()])->save();
                 }
             }
         }
