@@ -125,8 +125,10 @@ class DiditKycController extends Controller
         $rawStatus = (string) ($decision['status'] ?? 'pending');
         $statusLower = strtolower($rawStatus);
         
-        $isSandbox = str_starts_with((string) config('services.didit.api_key'), 'sk_test_')
-            || (($decision['environment'] ?? '') === 'sandbox');
+        $isSandbox = !app()->environment('production') && (
+            str_starts_with((string) config('services.didit.api_key'), 'sk_test_')
+            || (($decision['environment'] ?? '') === 'sandbox')
+        );
 
         // In Sandbox mode, submitted checks ("In Review" with approved face match) qualify as verified for developer testing
         $isApproved = in_array($statusLower, ['approved', 'completed', 'verified'])
@@ -167,6 +169,13 @@ class DiditKycController extends Controller
      */
     public function testApprove(Request $request): JsonResponse
     {
+        if (app()->environment('production') || config('app.env') === 'production') {
+            return response()->json([
+                'success' => false,
+                'message' => 'KYC test approval bypass is completely disabled in production environments.',
+            ], 403);
+        }
+
         $email = strtolower(trim((string) $request->input('email', '')));
         if (empty($email)) {
             return response()->json(['success' => false, 'message' => 'Email required.'], 422);
