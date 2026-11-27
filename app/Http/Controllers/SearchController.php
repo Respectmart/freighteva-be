@@ -405,6 +405,14 @@ class SearchController extends Controller
         foreach ($recResult['recommendations'] as $rec) {
             $partner = $rec['partner_attribution'];
             $icon = $iconMap[$rec['service_key']] ?? '⚡';
+            $curr = strtoupper(trim($rec['currency'] ?? 'USD'));
+            $currSymbol = match ($curr) {
+                'NGN' => '₦',
+                'GBP' => '£',
+                'EUR' => '€',
+                'CAD' => 'CA$',
+                default => '$',
+            };
 
             $formattedResults[] = [
                 'id' => $rec['quote_id'],
@@ -433,12 +441,13 @@ class SearchController extends Controller
                     'Live tracking'
                 ],
                 'days' => $rec['transit_days'],
-                'price' => '$' . number_format($rec['base_rate'], 2),
-                'total' => '$' . number_format($rec['calculated_price'], 2) . ' ' . $rec['currency'],
+                'price' => $currSymbol . number_format($rec['base_rate'], 2),
+                'total' => $currSymbol . number_format($rec['calculated_price'], 2) . ' ' . $curr,
                 'calculated_price' => $rec['calculated_price'],
                 'base_rate' => $rec['base_rate'],
                 'unit_label' => $rec['unit_label'] ?? null,
-                'currency' => $rec['currency'],
+                'currency' => $curr,
+                'currency_symbol' => $currSymbol,
                 'booking_token' => $rec['booking_token'],
                 'expires_at' => $rec['expires_at'],
                 'expires_in_seconds' => $rec['expires_in_seconds'],

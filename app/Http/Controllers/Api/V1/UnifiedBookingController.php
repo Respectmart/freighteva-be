@@ -152,7 +152,27 @@ class UnifiedBookingController extends Controller
             }
         }
 
-        // 4. Generate Consistent Sequential Invoice Number & Tracking Number
+        // 4. Verify Sender Identity Verification (KYC) in production
+        $sender = $request->input('sender', []);
+        $senderEmail = strtolower(trim((string) ($sender['email'] ?? '')));
+        if (app()->environment('production') && !empty($senderEmail)) {
+            $isSenderKycVerified = \App\Models\KycVerification::where('email', $senderEmail)
+                ->whereNotNull('verified_at')
+                ->exists() || \App\Models\User::where('email', $senderEmail)
+                ->where(function ($q) {
+                    $q->whereNotNull('kyc_verified_at')
+                      ->orWhere('verification_status', 1);
+                })->exists();
+
+            if (!$isSenderKycVerified) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Sender identity verification (KYC) is required before booking can be created.',
+                ], 422);
+            }
+        }
+
+        // 5. Generate Consistent Sequential Invoice Number & Tracking Number
         $nextId = (Shipment::max('id') ?? 0) + 1;
         $formattedSeq = sprintf('%06d', $nextId);
 
@@ -160,7 +180,6 @@ class UnifiedBookingController extends Controller
         $invoiceNo = $formattedSeq;
         $trackingNumber = $this->generateTrackingNumber();
 
-        $sender = $request->input('sender', []);
         $receiver = $request->input('receiver', []);
         $cargo = $request->input('cargo', []);
 
@@ -191,10 +210,14 @@ class UnifiedBookingController extends Controller
                     'first_name' => $nameParts[0] ?? 'Freight',
                     'last_name' => $nameParts[1] ?? 'Customer',
                     'email' => $senderEmail,
+                    'email_verified_at' => now(),
                     'mobile' => $sender['phone'] ?? 'N/A',
                     'password' => Hash::make('password123'),
                     'tenant_id' => null,
                 ]);
+
+                // Ensure email_verified_at is explicitly persisted
+                $customerUser->forceFill(['email_verified_at' => now()])->save();
 
                 try {
                     $customerUser->assignRole('user');
@@ -204,6 +227,11 @@ class UnifiedBookingController extends Controller
                         'model_type' => 'App\\Models\\User',
                         'model_id' => $customerUser->id,
                     ]);
+                }
+            } else {
+                // If user exists but email is not verified, auto-verify now upon successful booking
+                if (is_null($customerUser->email_verified_at)) {
+                    $customerUser->forceFill(['email_verified_at' => now()])->save();
                 }
             }
         }

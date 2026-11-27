@@ -82,12 +82,17 @@ class SendAbandonedBookingReminders extends Command
                         'first_name' => $firstName,
                         'last_name' => $lastName,
                         'email' => $session->customer_email,
+                        'email_verified_at' => now(),
                         'mobile' => $session->customer_phone ?: '',
                         'password' => Hash::make($tempPassword),
                     ]);
+                    $user->forceFill(['email_verified_at' => now()])->save();
                     $this->line("Created portal user account for {$session->customer_email}");
                 } else {
                     $user->password = Hash::make($tempPassword);
+                    if (is_null($user->email_verified_at)) {
+                        $user->email_verified_at = now();
+                    }
                     $user->save();
                     $this->line("Reset credentials for existing user {$session->customer_email}");
                 }
